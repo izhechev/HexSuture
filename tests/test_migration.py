@@ -1,0 +1,99 @@
+"""Verify that milestone 1 case files survive the upgrade to live scans."""
+
+import argparse
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+import json
+from pathlib import Path
+import sqlite3
+import subprocess
+import tempfile
+import unittest
+
+from test_replay import ROOT, SAMPLE
+
+
+V1_SCHEMA = """
+PRAGMA application_id = 0x48585355;
+PRAGMA user_version = 1;
+CREATE TABLE observations (
+    device TEXT NOT NULL COLLATE NOCASE,
+    channel TEXT NOT NULL COLLATE NOCASE,
+    provider TEXT NOT NULL COLLATE NOCASE,
+    record_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    occurred_utc TEXT NOT NULL,
+    facts_json TEXT NOT NULL,
+    origin TEXT NOT NULL DEFAULT 'replay' CHECK (origin = 'replay'),
+    PRIMARY KEY (device, channel, provider, record_id, occurred_utc)
+);
+CREATE TABLE source_gaps (
+    source_name TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    PRIMARY KEY (source_name, reason)
+);
+INSERT INTO observations VALUES (
+    'OLD-PC', 'Microsoft-Windows-Windows Defender/Operational',
+    'Microsoft-Windows-Windows Defender', 7, 1000, '2026-11-18T08:00:00.0000000Z',
+    '{}', 'replay'
+);
+INSERT INTO source_gaps VALUES ('old.xml', 'Source is missing.');
+"""
+
+
+class MigrationTests(unittest.TestCase):
+    dll = ROOT / "src/HexSuture/bin/Debug/net10.0/HexSuture.dll"
+
+    def setUp(self):
+        workspace = tempfile.TemporaryDirectory()
+        self.addCleanup(workspace.cleanup)
+        self.case = Path(workspace.name) / "case.db"
+        with closing(sqlite3.connect(self.case)) as db:
+            db.executescript(V1_SCHEMA)
+
+    def cli(self, *args):
+        return subprocess.run(
+            ["dotnet", str(self.dll), *map(str, args)],
+            capture_output=True, text=True, encoding="utf-8", check=True, timeout=45,
+        ).stdout
+
+    def test_read_v1_without_migration(self):
+        original = self.case.read_bytes()
+        report = json.loads(self.cli("show", self.case))
+        self.assertEqual(self.case.read_bytes(), original)
+        self.assertEqual(report["scanRequests"], [])
+        self.assertEqual([event["mode"] for event in report["observations"]], ["replay"])
+        self.assertEqual(report["sourceGaps"][0]["sourceName"], "old.xml")
+
+    def test_concurrent_migration_and_distinct_origins(self):
+        def import_sample():
+            self.cli("import", self.case, SAMPLE)
+
+        with ThreadPoolExecutor(max_workers=3) as workers:
+            jobs = [workers.submit(import_sample) for _ in range(3)]
+            for job in jobs:
+                job.result()
+
+        with closing(sqlite3.connect(self.case)) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT count(*) FROM observations").fetchone()[0], 2)
+            # Seed a synthetic live record so this compatibility test works without Defender.
+            db.execute("UPDATE observations SET origin = 'live' WHERE record_id = 42")
+            db.commit()
+
+        import_sample()
+        import_sample()
+        report = json.loads(self.cli("show", self.case))
+        identities = sorted((event["recordId"], event["mode"]) for event in report["observations"])
+        self.assertEqual(identities, [(7, "replay"), (42, "live"), (42, "replay")])
+        self.assertEqual(report["sourceGaps"], [{"sourceName": "old.xml", "reason": "Source is missing."}])
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("dll", nargs="?", type=Path, default=MigrationTests.dll)
+    args = parser.parse_args()
+    if not args.dll.is_file():
+        parser.error(f"Could not find the built HexSuture DLL at {args.dll}")
+    MigrationTests.dll = args.dll.resolve()
+    unittest.main(argv=[__file__], verbosity=2)

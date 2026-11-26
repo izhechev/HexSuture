@@ -20,17 +20,30 @@ internal sealed record ReplayEvent(
 
     internal static ReplayEvent Read(string path)
     {
-        var settings = new XmlReaderSettings
-        {
-            DtdProcessing = DtdProcessing.Prohibit,
-            XmlResolver = null,
-            MaxCharactersInDocument = 1_048_576
-        };
         using var source = File.OpenRead(path);
+        using var reader = XmlReader.Create(source, ReaderSettings());
+        return Parse(reader);
+    }
+
+    internal static ReplayEvent ReadXml(string xml)
+    {
+        using var source = new StringReader(xml);
+        using var reader = XmlReader.Create(source, ReaderSettings());
+        return Parse(reader);
+    }
+
+    private static XmlReaderSettings ReaderSettings() => new()
+    {
+        DtdProcessing = DtdProcessing.Prohibit,
+        XmlResolver = null,
+        MaxCharactersInDocument = 1_048_576
+    };
+
+    private static ReplayEvent Parse(XmlReader reader)
+    {
         XElement root;
         try
         {
-            using var reader = XmlReader.Create(source, settings);
             root = XDocument.Load(reader, LoadOptions.PreserveWhitespace).Root
                 ?? throw new InvalidDataException("The XML file contains no event.");
         }

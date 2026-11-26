@@ -1,13 +1,19 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using HexSuture;
 using Microsoft.Data.Sqlite;
 
 const string usage = """
-    Import one saved Defender event XML into a local case, or read the case report.
+    Run a Defender scan, review a case, or replay a saved Defender event.
 
       HexSuture import <case.db> <event.xml>
-      HexSuture show <case.db>
+      HexSuture show <case.db> [--paths]
+      HexSuture scan <case.db> folder <directory>
+      HexSuture scan <case.db> quick
+      HexSuture scan <case.db> full
+      HexSuture history
     """;
 
 try
@@ -16,10 +22,23 @@ try
     {
         case ["import", var database, var source]:
             return Import(database, source);
-        case ["show", var database]:
-            using (var store = new CaseStore(database, create: false))
+        case ["scan", var database, "folder", var folder]:
+            return RunScan(database, "folder", folder);
+        case ["scan", var database, var kind] when kind is "quick" or "full":
+            return RunScan(database, kind, null);
+        case ["history"]:
+            if (!OperatingSystem.IsWindows())
             {
-                WriteReport(store);
+                Console.Error.WriteLine("Protection History is available in Windows Security.");
+                return 1;
+            }
+            Process.Start(new ProcessStartInfo("windowsdefender://history") { UseShellExecute = true })?.Dispose();
+            return 0;
+        case ["show", _]:
+        case ["show", _, "--paths"]:
+            using (var store = new CaseStore(args[1], create: false))
+            {
+                WriteReport(store, includePaths: args.Length == 3);
             }
             return 0;
         case ["--help"] or ["-h"]:
@@ -30,10 +49,30 @@ try
             return 2;
     }
 }
-catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or SqliteException or ArgumentException or JsonException)
+catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or SqliteException or ArgumentException or JsonException or Win32Exception)
 {
     Console.Error.WriteLine($"Case error: {ex.Message}");
     return 1;
+}
+
+static int RunScan(string database, string kind, string? folder)
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        Console.Error.WriteLine("Live scans require Microsoft Defender Antivirus on Windows. Use import to replay a saved event.");
+        return 1;
+    }
+    if (folder is not null)
+    {
+        folder = Path.GetFullPath(folder);
+        if (!Directory.Exists(folder))
+        {
+            Console.Error.WriteLine("Choose an existing folder to scan.");
+            return 2;
+        }
+    }
+    using var store = new CaseStore(database, create: true);
+    return DefenderScanner.Run(store, kind, folder);
 }
 
 static int Import(string database, string source)
@@ -84,20 +123,36 @@ static int ReportSourceGap(CaseStore store, string source, string reason)
     return 1;
 }
 
-static void WriteReport(CaseStore store)
+static void WriteReport(CaseStore store, bool includePaths)
 {
+    var events = store.ObservedEvents().ToList();
     var report = new
     {
-        observations = store.Observations().Select(item => new
+        scanRequests = store.ScanRequests().Select(request => new
         {
-            mode = "replay",
-            device = item.Device,
-            occurredUtc = item.OccurredUtc,
-            channel = item.Channel,
-            provider = item.Provider,
-            recordId = item.RecordId,
-            eventId = item.EventId,
-            facts = ReportFacts(item)
+            requestId = request.Id,
+            device = request.Device,
+            kind = request.Kind,
+            folder = includePaths ? request.Folder : null,
+            requestedUtc = request.RequestedUtc,
+            endedUtc = request.EndedUtc,
+            engineVersion = request.EngineVersion,
+            signatureVersion = request.SignatureVersion,
+            processExitCode = request.ExitCode,
+            error = request.Error
+        }),
+        scans = ScanEvidence.Scans(events),
+        detections = ScanEvidence.Detections(events, includePaths),
+        observations = events.Select(observed => new
+        {
+            mode = observed.Mode,
+            device = observed.Item.Device,
+            occurredUtc = observed.Item.OccurredUtc,
+            channel = observed.Item.Channel,
+            provider = observed.Item.Provider,
+            recordId = observed.Item.RecordId,
+            eventId = observed.Item.EventId,
+            facts = ReportFacts(observed.Item)
         }),
         sourceGaps = store.SourceGaps().Select(gap => new
         {

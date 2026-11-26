@@ -5,7 +5,36 @@ namespace HexSuture;
 internal sealed class CaseStore : IDisposable
 {
     private const int ApplicationId = 0x48585355;
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
+    private const string CreateObservations = """
+        CREATE TABLE observations_v2 (
+            device TEXT NOT NULL COLLATE NOCASE,
+            channel TEXT NOT NULL COLLATE NOCASE,
+            provider TEXT NOT NULL COLLATE NOCASE,
+            record_id INTEGER NOT NULL,
+            event_id INTEGER NOT NULL,
+            occurred_utc TEXT NOT NULL,
+            facts_json TEXT NOT NULL,
+            origin TEXT NOT NULL CHECK (origin IN ('live', 'replay')),
+            PRIMARY KEY (device, channel, provider, record_id, occurred_utc, origin)
+        );
+        """;
+    private const string CreateScanRequests = """
+        CREATE TABLE scan_requests (
+            id TEXT PRIMARY KEY NOT NULL,
+            device TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('folder', 'quick', 'full')),
+            folder TEXT,
+            requested_utc TEXT NOT NULL,
+            engine_version TEXT,
+            signature_version TEXT,
+            ended_utc TEXT,
+            exit_code INTEGER,
+            error TEXT,
+            CHECK ((kind = 'folder') = (folder IS NOT NULL))
+        );
+        """;
+    private readonly long version;
     private readonly SqliteConnection connection;
 
     public CaseStore(string databasePath, bool create)
@@ -20,7 +49,9 @@ internal sealed class CaseStore : IDisposable
         try
         {
             connection.Open();
+            using var transaction = create ? connection.BeginTransaction() : null;
             using var command = connection.CreateCommand();
+            command.Transaction = transaction;
             command.CommandText = "PRAGMA application_id";
             if (!Equals(command.ExecuteScalar(), (long)ApplicationId))
             {
@@ -28,10 +59,29 @@ internal sealed class CaseStore : IDisposable
             }
 
             command.CommandText = "PRAGMA user_version";
-            if (!Equals(command.ExecuteScalar(), (long)SchemaVersion))
+            version = (long)command.ExecuteScalar()!;
+            if (version != 1 && version != SchemaVersion)
             {
                 throw new InvalidDataException("Unsupported HexSuture case version.");
             }
+
+            if (version == 1 && create)
+            {
+                command.CommandText = $"""
+                    {CreateObservations}
+                    INSERT INTO observations_v2
+                        (device, channel, provider, record_id, event_id, occurred_utc, facts_json, origin)
+                    SELECT device, channel, provider, record_id, event_id, occurred_utc, facts_json, origin
+                        FROM observations;
+                    DROP TABLE observations;
+                    ALTER TABLE observations_v2 RENAME TO observations;
+                    {CreateScanRequests}
+                    PRAGMA user_version = {SchemaVersion};
+                    """;
+                command.ExecuteNonQuery();
+                version = SchemaVersion;
+            }
+            transaction?.Commit();
         }
         catch
         {
@@ -70,17 +120,9 @@ internal sealed class CaseStore : IDisposable
                 command.CommandText = $"""
                     PRAGMA application_id = {ApplicationId};
                     PRAGMA user_version = {SchemaVersion};
-                    CREATE TABLE observations (
-                        device TEXT NOT NULL COLLATE NOCASE,
-                        channel TEXT NOT NULL COLLATE NOCASE,
-                        provider TEXT NOT NULL COLLATE NOCASE,
-                        record_id INTEGER NOT NULL,
-                        event_id INTEGER NOT NULL,
-                        occurred_utc TEXT NOT NULL,
-                        facts_json TEXT NOT NULL,
-                        origin TEXT NOT NULL DEFAULT 'replay' CHECK (origin = 'replay'),
-                        PRIMARY KEY (device, channel, provider, record_id, occurred_utc)
-                    );
+                    {CreateObservations}
+                    ALTER TABLE observations_v2 RENAME TO observations;
+                    {CreateScanRequests}
                     CREATE TABLE source_gaps (
                         source_name TEXT NOT NULL,
                         reason TEXT NOT NULL,
@@ -105,15 +147,19 @@ internal sealed class CaseStore : IDisposable
         }
     }
 
-    public bool Add(ReplayEvent item)
+    public bool Add(ReplayEvent item) => AddObservation(item, "replay");
+
+    public bool AddLive(ReplayEvent item) => AddObservation(item, "live");
+
+    private bool AddObservation(ReplayEvent item, string origin)
     {
         using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            INSERT INTO observations (device, channel, provider, record_id, event_id, occurred_utc, facts_json)
-            VALUES ($device, $channel, $provider, $record, $event, $time, $facts)
-            ON CONFLICT (device, channel, provider, record_id, occurred_utc) DO NOTHING;
+            INSERT INTO observations (device, channel, provider, record_id, event_id, occurred_utc, facts_json, origin)
+            VALUES ($device, $channel, $provider, $record, $event, $time, $facts, $origin)
+            ON CONFLICT (device, channel, provider, record_id, occurred_utc, origin) DO NOTHING;
             """;
         command.Parameters.AddWithValue("$device", item.Device);
         command.Parameters.AddWithValue("$channel", item.Channel);
@@ -122,13 +168,14 @@ internal sealed class CaseStore : IDisposable
         command.Parameters.AddWithValue("$event", item.EventId);
         command.Parameters.AddWithValue("$time", item.OccurredUtc);
         command.Parameters.AddWithValue("$facts", item.FactsJson);
+        command.Parameters.AddWithValue("$origin", origin);
         bool added = command.ExecuteNonQuery() == 1;
         if (!added)
         {
             command.CommandText = """
                 SELECT event_id = $event AND facts_json = $facts FROM observations
                 WHERE device = $device AND channel = $channel AND provider = $provider
-                  AND record_id = $record AND occurred_utc = $time;
+                  AND record_id = $record AND occurred_utc = $time AND origin = $origin;
                 """;
             if (!Equals(command.ExecuteScalar(), 1L))
             {
@@ -152,19 +199,19 @@ internal sealed class CaseStore : IDisposable
         command.ExecuteNonQuery();
     }
 
-    public IEnumerable<ReplayEvent> Observations()
+    public IEnumerable<(string Mode, ReplayEvent Item)> ObservedEvents()
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT device, channel, provider, record_id, event_id, occurred_utc, facts_json
-            FROM observations ORDER BY occurred_utc, device, channel, provider, record_id;
+            SELECT device, channel, provider, record_id, event_id, occurred_utc, facts_json, origin
+            FROM observations ORDER BY occurred_utc, device, channel, provider, record_id, origin;
             """;
         using var rows = command.ExecuteReader();
         while (rows.Read())
         {
-            yield return new ReplayEvent(
+            yield return (rows.GetString(7), new ReplayEvent(
                 rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetInt64(3),
-                rows.GetInt32(4), rows.GetString(5), rows.GetString(6));
+                rows.GetInt32(4), rows.GetString(5), rows.GetString(6)));
         }
     }
 
@@ -178,6 +225,66 @@ internal sealed class CaseStore : IDisposable
             yield return (rows.GetString(0), rows.GetString(1));
         }
     }
+
+    public void StartScan(ScanRequest request)
+    {
+        if (request.EndedUtc is not null || request.ExitCode is not null || request.Error is not null)
+            throw new ArgumentException("A new scan request cannot have a prior outcome.");
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO scan_requests (id, device, kind, folder, requested_utc, engine_version, signature_version)
+            VALUES ($id, $device, $kind, $folder, $requested, $engine, $signature);
+            """;
+        command.Parameters.AddWithValue("$id", request.Id);
+        command.Parameters.AddWithValue("$device", request.Device);
+        command.Parameters.AddWithValue("$kind", request.Kind);
+        command.Parameters.AddWithValue("$folder", (object?)request.Folder ?? DBNull.Value);
+        command.Parameters.AddWithValue("$requested", request.RequestedUtc);
+        command.Parameters.AddWithValue("$engine", (object?)request.EngineVersion ?? DBNull.Value);
+        command.Parameters.AddWithValue("$signature", (object?)request.SignatureVersion ?? DBNull.Value);
+        command.ExecuteNonQuery();
+    }
+
+    public void FinishScan(string id, string endedUtc, int? exitCode, string? error)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE scan_requests SET ended_utc = $ended, exit_code = $code, error = $error
+            WHERE id = $id AND (ended_utc IS NULL OR
+                (ended_utc = $ended AND exit_code IS $code AND error IS $error));
+            """;
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$ended", endedUtc);
+        command.Parameters.AddWithValue("$code", (object?)exitCode ?? DBNull.Value);
+        command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
+        if (command.ExecuteNonQuery() != 1)
+            throw new InvalidDataException("The scan request is missing or already has another outcome.");
+    }
+
+    public IEnumerable<ScanRequest> ScanRequests()
+    {
+        if (version < 2)
+            yield break;
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, device, kind, folder, requested_utc, engine_version, signature_version,
+                   ended_utc, exit_code, error
+            FROM scan_requests ORDER BY requested_utc, id;
+            """;
+        using var rows = command.ExecuteReader();
+        while (rows.Read())
+        {
+            yield return new ScanRequest(
+                rows.GetString(0), rows.GetString(1), rows.GetString(2), OptionalText(rows, 3),
+                rows.GetString(4), OptionalText(rows, 5), OptionalText(rows, 6), OptionalText(rows, 7),
+                rows.IsDBNull(8) ? null : rows.GetInt32(8), OptionalText(rows, 9));
+        }
+    }
+
+    private static string? OptionalText(SqliteDataReader rows, int ordinal) =>
+        rows.IsDBNull(ordinal) ? null : rows.GetString(ordinal);
 
     public void Dispose() => connection.Dispose();
 }

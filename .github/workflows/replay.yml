@@ -1,4 +1,4 @@
-name: Case replay
+name: HexSuture tests
 on: [push, pull_request]
 
 permissions:
@@ -17,7 +17,29 @@ jobs:
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
         with:
           dotnet-version: 10.0.x
-      - name: Build the replay tool
+      - name: Build HexSuture
         run: dotnet build src/HexSuture --configuration Release --warnaserror
-      - name: Check case replay in separate processes
+      - name: Test replay and privacy
         run: python tests/test_replay.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
+      - name: Test scan and detection evidence
+        run: python tests/test_scan_evidence.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
+      - name: Test existing case databases
+        run: python tests/test_migration.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
+
+  live-defender:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
+        with:
+          dotnet-version: 10.0.x
+      - name: Build HexSuture
+        run: dotnet build src/HexSuture --configuration Release --warnaserror
+      - name: Scan 100 benign files and check EICAR attribution
+        run: python tests/live_scan.py src/HexSuture/bin/Release/net10.0/HexSuture.dll --eicar
