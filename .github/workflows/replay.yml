@@ -70,13 +70,18 @@ jobs:
         run: |
           $root = (Get-Content -LiteralPath "$env:RUNNER_TEMP/hexsuture-drive.txt" -Raw).Trim()
           python tests/live_scan.py src/HexSuture/bin/Release/net10.0/HexSuture.dll --eicar --parent $root
-      - name: Capture Microsoft's harmless AMSI test
+      - name: Verify live Defender event collection
         shell: pwsh
         run: |
-          if ((Get-MpPreference).DisableScriptScanning) { Set-MpPreference -DisableScriptScanning $false }
-          if ((Get-MpPreference).DisableScriptScanning) { throw 'The runner still has script scanning disabled.' }
-          $root = (Get-Content -LiteralPath "$env:RUNNER_TEMP/hexsuture-drive.txt" -Raw).Trim()
-          ./tests/live_amsi.ps1 src/HexSuture/bin/Release/net10.0/HexSuture.dll -TestVolume $root
+          $case = Join-Path $env:RUNNER_TEMP "defender-collection.db"
+          $dll = "src/HexSuture/bin/Release/net10.0/HexSuture.dll"
+          dotnet $dll fileless collect $case --minutes 10
+          if ($LASTEXITCODE -ne 0) { throw 'Defender collection reported a gap.' }
+          $report = dotnet $dll show $case | ConvertFrom-Json
+          $live = $report.detections | Where-Object { $_.mode -eq 'live' -and $_.threatName -match 'EICAR' }
+          if (!$live -or $report.filelessMemoryCoverage -ne 'unknown') {
+            throw 'The independent collector did not show the live EICAR event or its coverage limit.'
+          }
       - name: Diagnose Defender coverage on the disposable runner
         if: failure()
         shell: pwsh
