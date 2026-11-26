@@ -1,0 +1,23 @@
+name: Case replay
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-replay:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
+        with:
+          dotnet-version: 10.0.x
+      - name: Build the replay tool
+        run: dotnet build src/HexSuture --configuration Release --warnaserror
+      - name: Check case replay in separate processes
+        run: python tests/test_replay.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
