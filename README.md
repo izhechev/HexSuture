@@ -60,6 +60,42 @@ A file-bound benign decision applies while its expiry is in the future and the s
 
 `export review.db` writes a redacted JSON case to standard output. It keeps detection IDs, decision history and links to the underlying event records. Use `export review.db --include-evidence` for a private copy with the stored event facts, resource paths and review notes. Cases from milestones 1 and 2 remain readable and upgrade on the next write.
 
+## Review startup changes
+
+Save matching CSV snapshots from Autorunsc on the same computer. Use the same account and options for both captures. For example, run the scheduled-task capture with `autorunsc.exe -a t -c -h -s` and save its output to a local CSV file. Keep the baseline from a known-good point. The comparison shows added, changed and removed rows with their original capture fields. A legitimate updater can appear in the same report as a suspicious task. [Sysinternals Autoruns](https://learn.microsoft.com/en-us/sysinternals/downloads/autoruns)
+
+```sh
+dotnet run --project src/HexSuture -- startup import case.db baseline clean.csv --device LAB-PC --scope user-tasks
+dotnet run --project src/HexSuture -- startup import case.db current recent.csv --device LAB-PC --scope user-tasks
+dotnet run --project src/HexSuture -- startup diff case.db
+```
+
+The device and scope labels come from the reviewer. Importing again replaces that slot in the case. Keep the CSV and case in a private folder because inventory fields can include local paths and command lines.
+
+## Disable or remove a reviewed scheduled task
+
+Use the exact path from Windows Task Scheduler. The task must be idle, enabled at review, owned by the current Windows user and configured to run with that user's interactive token at least privilege. Windows must let that user change the task. System tasks, service accounts and tasks that use saved credentials require manual review.
+
+```powershell
+dotnet run --project src/HexSuture -- task review case.db "\MyTasks\Example" --reason "Confirmed unwanted startup task"
+dotnet run --project src/HexSuture -- task status case.db "<review-id>" --details
+dotnet run --project src/HexSuture -- task disable case.db "<review-id>" --approve
+```
+
+The review stores the definition, owner and permissions. HexSuture rechecks them before writing and checks the task afterward. If you interrupt a change, retry the same command and review ID. The case retains both the pending request and the observed result.
+
+After disabling, choose rollback to restore the previous enabled state or restart Windows to verify the task stayed disabled.
+
+```powershell
+dotnet run --project src/HexSuture -- task rollback case.db "<review-id>" --approve
+dotnet run --project src/HexSuture -- task verify case.db "<review-id>"
+dotnet run --project src/HexSuture -- task remove case.db "<review-id>" --approve
+```
+
+Use a fresh review for the removal path if you already rolled back. After a restart, `verify` checks the live task and records the boot time. `remove` permanently deletes only that verified task registration. Treat removal as a separate approval. To check whether a removed task has returned, run `task verify` again. [Task Scheduler enabled state](https://learn.microsoft.com/en-us/windows/win32/taskschd/registeredtask-enabled) · [Task Scheduler deletion](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-deletetask)
+
+The hosted Windows test uses a disposable task with no triggers. The task workflow tests use simulated restarts to exercise post-restart verification, removal and interrupted requests. To verify the full sequence with Windows itself, use a dedicated test PC or VM and run the verification and removal commands after an actual restart.
+
 ## Run the acceptance tests
 
 The tests use Python 3 and start a fresh copy of the CLI for each command. They use temporary case files and the synthetic XML sample.

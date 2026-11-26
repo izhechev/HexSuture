@@ -25,6 +25,11 @@ jobs:
         run: python tests/test_scan_evidence.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
       - name: Test existing case databases
         run: python tests/test_migration.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
+      - name: Test task cleanup and interrupted retries
+        run: dotnet run --project tests/TaskWorkflow --configuration Release
+      - name: Check live Task Scheduler disable and rollback
+        shell: pwsh
+        run: ./tests/live_task.ps1 src/HexSuture/bin/Release/net10.0/HexSuture.dll
 
   live-defender:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -2,10 +2,10 @@ using Microsoft.Data.Sqlite;
 
 namespace HexSuture;
 
-internal sealed class CaseStore : IDisposable
+internal sealed partial class CaseStore : IDisposable
 {
     private const int ApplicationId = 0x48585355;
-    private const int SchemaVersion = 3;
+    private const int SchemaVersion = 4;
     private const string CreateObservations = """
         CREATE TABLE observations_v2 (
             device TEXT NOT NULL COLLATE NOCASE,
@@ -94,10 +94,15 @@ internal sealed class CaseStore : IDisposable
                     """;
                 command.ExecuteNonQuery();
             }
+            if (version < 3 && create)
+            {
+                command.CommandText = CreateReviews;
+                command.ExecuteNonQuery();
+            }
             if (version < SchemaVersion && create)
             {
                 command.CommandText = $"""
-                    {CreateReviews}
+                    {CreatePersistence}
                     PRAGMA user_version = {SchemaVersion};
                     """;
                 command.ExecuteNonQuery();
@@ -146,6 +151,7 @@ internal sealed class CaseStore : IDisposable
                     ALTER TABLE observations_v2 RENAME TO observations;
                     {CreateScanRequests}
                     {CreateReviews}
+                    {CreatePersistence}
                     CREATE TABLE source_gaps (
                         source_name TEXT NOT NULL,
                         reason TEXT NOT NULL,

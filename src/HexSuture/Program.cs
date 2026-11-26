@@ -1,6 +1,10 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Management;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using System.Xml;
 using System.Text.Json;
 using HexSuture;
 using Microsoft.Data.Sqlite;
@@ -17,6 +21,12 @@ const string usage = """
       HexSuture scan <case.db> quick
       HexSuture scan <case.db> full
       HexSuture history
+      HexSuture startup import <case.db> <baseline|current> <csv> --device <name> --scope <scope>
+      HexSuture startup diff <case.db>
+      HexSuture task review <case.db> <task-path> --reason <text>
+      HexSuture task status <case.db> <review-id> [--details]
+      HexSuture task verify <case.db> <review-id>
+      HexSuture task <disable|rollback|remove> <case.db> <review-id> --approve
     """;
 
 try
@@ -48,6 +58,36 @@ try
             using (var store = new CaseStore(database, create: false))
                 WriteReport(store, export, details, checkFile);
             return 0;
+        case ["startup", "import", var database, ("baseline" or "current") and var slot, var csv,
+              "--device", var device, "--scope", var scope]:
+            var snapshot = StartupInventory.Read(csv, device, scope);
+            using (var store = new CaseStore(database, create: true))
+                store.SaveInventory(slot, snapshot);
+            Console.WriteLine($"Saved the {slot} inventory with {snapshot.Entries.Length} entries.");
+            return 0;
+        case ["startup", "diff", var database]:
+            using (var store = new CaseStore(database, create: false))
+                PrintJson(StartupInventory.Compare(store.Inventory("baseline"), store.Inventory("current")));
+            return 0;
+        case ["task", "status", _, _]:
+        case ["task", "status", _, _, "--details"]:
+            using (var store = new CaseStore(args[2], create: false))
+                PrintTask(store.Task(args[3]), args.Length == 5);
+            return 0;
+        case ["task", "review", var database, var taskPath, "--reason", var reason]:
+            if (!OperatingSystem.IsWindows())
+                throw new ArgumentException("Live task review requires Windows.");
+            WindowsTasks.ValidatePath(taskPath);
+            using (var store = new CaseStore(database, create: true))
+                PrintTask(TaskCleanup.Review(store, new WindowsTasks(), taskPath, reason));
+            return 0;
+        case ["task", "verify", _, _]:
+        case ["task", "disable" or "rollback" or "remove", _, _, "--approve"]:
+            if (!OperatingSystem.IsWindows())
+                throw new ArgumentException("Live task operations require Windows.");
+            using (var store = new CaseStore(args[2], create: true, allowCreate: false))
+                PrintTask(TaskCleanup.Run(store, new WindowsTasks(), args[3], args[1]));
+            return 0;
         case ["--help"] or ["-h"]:
             Console.WriteLine(usage);
             return 0;
@@ -56,11 +96,25 @@ try
             return 2;
     }
 }
-catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or SqliteException or ArgumentException or JsonException or Win32Exception)
+catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or SqliteException or ArgumentException or JsonException or Win32Exception or COMException or ManagementException or IdentityNotMappedException or XmlException)
 {
     Console.Error.WriteLine($"Case error: {ex.Message}");
     return 1;
 }
+
+static void PrintTask(TaskReview review, bool details = false)
+{
+    PrintJson(new
+    {
+        review.Id, path = details ? review.Path : null, state = review.Latest.State,
+        review.Before.Fingerprint, review.History,
+        reason = details ? review.Reason : null,
+        before = details ? review.Before : null
+    });
+}
+
+static void PrintJson(object value) => Console.WriteLine(JsonSerializer.Serialize(value,
+    new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
 
 static int RunScan(string database, string kind, string? folder)
 {
