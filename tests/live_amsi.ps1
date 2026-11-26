@@ -1,9 +1,13 @@
-param([Parameter(Mandatory)][string]$Dll)
+param(
+    [Parameter(Mandatory)][string]$Dll,
+    [Parameter(Mandatory)][string]$TestVolume
+)
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $started = [DateTimeOffset]::UtcNow
 $case = Join-Path $env:RUNNER_TEMP ('hexsuture-amsi-' + [Guid]::NewGuid().ToString('N') + '.db')
+$sample = Join-Path $TestVolume ('hexsuture-amsi-' + [Guid]::NewGuid().ToString('N') + '.ps1')
 $defender = Get-MpComputerStatus
 if (!$defender.AntivirusEnabled -or !$defender.RealTimeProtectionEnabled -or !$defender.BehaviorMonitorEnabled) {
     throw 'The AMSI demonstration requires active Defender, real-time protection and behavior monitoring.'
@@ -12,11 +16,12 @@ if (!$defender.AntivirusEnabled -or !$defender.RealTimeProtectionEnabled -or !$d
 try {
     # Microsoft's fixed, harmless test marker submitted to Windows PowerShell's AMSI integration.
     $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $testOutput = & $powershell -NoProfile -NonInteractive -Command {
-        $ErrorActionPreference = 'Stop'
-        $marker = 'AMSI Test Sample: ' + '7e72c3ce-861b-4339-8740-0ac1484c1386'
-        Invoke-Expression $marker
-    } 2>&1
+    @'
+$ErrorActionPreference = 'Stop'
+$marker = 'AMSI Test Sample: ' + '7e72c3ce-861b-4339-8740-0ac1484c1386'
+Invoke-Expression $marker
+'@ | Set-Content -LiteralPath $sample -Encoding ascii
+    $testOutput = & $powershell -NoProfile -NonInteractive -File $sample 2>&1
     $testExit = $LASTEXITCODE
     $blocked = (($testOutput -join ' ') -match 'ScriptContainedMaliciousContent')
     Write-Host "AMSI test process exit=$testExit, reported block=$blocked."
@@ -40,4 +45,5 @@ try {
 }
 finally {
     if (Test-Path -LiteralPath $case) { Remove-Item -LiteralPath $case }
+    if (Test-Path -LiteralPath $sample) { Remove-Item -LiteralPath $sample }
 }
