@@ -36,6 +36,26 @@ try
         scheduler.Deletions == 1, "Removal retry issued a second delete.");
     scheduler.Current = removal.Before;
     Reject(() => TaskCleanup.Run(reopened, scheduler, removal.Id, "verify"), "returned");
+    removal = reopened.Task(removal.Id);
+    var finding = new FilelessFinding("fileless-fixture", "live", "LAB-PC", null, "amsi", "amsi",
+        "Test:Win32/Fixture", null, "2026-11-20T00:00:00Z",
+        [new FilelessAction(1, 1116, "2026-11-20T00:00:00Z", "detection", "detected"),
+         new FilelessAction(2, 1117, "2026-11-20T00:00:01Z", "quarantine", "remediated")]);
+    var check = new FilelessFollowUp(finding.FindingId, removal.Id, removal.Latest.ObservedUtc,
+        DateTimeOffset.UtcNow, "active");
+    reopened.SaveFollowUp(check);
+    object Report() => FilelessReview.Report([finding], reopened.FilelessFollowUps(), reopened.Task, false).Single();
+    var active = System.Text.Json.JsonSerializer.SerializeToElement(Report());
+    Assert(active.GetProperty("status").GetString() == "open", "Active task link closed a fileless finding.");
+    reopened.SaveFollowUp(check with { Status = "removed", CheckedUtc = check.CheckedUtc.AddSeconds(1) });
+    reopened.SaveFollowUp(check);
+    var cleaned = System.Text.Json.JsonSerializer.SerializeToElement(Report());
+    Assert(cleaned.GetProperty("status").GetString() == "closed", "A stale follow-up overwrote the newer result.");
+    var changed = removal with { History = [.. removal.History,
+        new TaskStep("returned", DateTimeOffset.UtcNow.AddSeconds(1), scheduler.BootUtc, true)] };
+    reopened.SaveTask(changed);
+    var stale = System.Text.Json.JsonSerializer.SerializeToElement(Report());
+    Assert(stale.GetProperty("status").GetString() == "open", "Changed task state did not reopen the finding.");
     Console.WriteLine("Task workflow passed with simulated reboots, interruption, rollback, and removal.");
 }
 finally

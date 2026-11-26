@@ -51,6 +51,64 @@ internal static class ScanEvidence
         Read(events.Where(row => row.Item.EventId is >= 1116 and <= 1119))
             .GroupBy(entry => Key(entry, "Detection ID"));
 
+    internal static IEnumerable<FilelessFinding> FilelessFindings(IReadOnlyList<(string Mode, ReplayEvent Item)> events)
+    {
+        var candidates = Read(events.Where(row => row.Item.EventId == 1015 || row.Item.EventId is >= 1116 and <= 1119));
+        foreach (var group in candidates.GroupBy(entry => Key(entry, "Detection ID")))
+        {
+            var detection = group.FirstOrDefault(entry => FilelessKind(entry) is not null);
+            if (detection is null)
+                continue;
+
+            var timeline = new List<FilelessAction>();
+            Entry? lastDetection = null;
+            foreach (var entry in group.SkipWhile(entry => entry != detection))
+            {
+                if (entry.Item.EventId is 1015 or 1116)
+                {
+                    lastDetection = entry;
+                    timeline.Add(new FilelessAction(entry.Item.RecordId, entry.Item.EventId,
+                        entry.Item.OccurredUtc, "detection", "detected"));
+                }
+                else if (lastDetection is not null && MatchingThreat(lastDetection, entry))
+                {
+                    var action = ActionName(entry);
+                    timeline.Add(new FilelessAction(entry.Item.RecordId, entry.Item.EventId,
+                        entry.Item.OccurredUtc, action, ActionStatus(entry, action)));
+                }
+            }
+            yield return new FilelessFinding(ReviewFinding.Identifier(detection.Mode, detection.Item),
+                detection.Mode, detection.Item.Device, group.Key.Id, FilelessKind(detection)!,
+                SourceName(detection), ThreatName(detection), detection.Field("Process Name"),
+                detection.Item.OccurredUtc, timeline.ToArray());
+        }
+    }
+
+    private static string? FilelessKind(Entry entry)
+    {
+        if (entry.Item.EventId is not (1015 or 1116))
+            return null;
+
+        string? name = ThreatName(entry);
+        if (SourceName(entry) == "amsi" ||
+            (entry.Field("Path")?.StartsWith("amsi:", StringComparison.OrdinalIgnoreCase) ?? false) ||
+            string.Equals(name, "Virus:Win32/MpTest!amsi", StringComparison.OrdinalIgnoreCase))
+            return "amsi";
+        if (entry.Item.EventId == 1015 || (name?.StartsWith("Behavior:", StringComparison.OrdinalIgnoreCase) ?? false))
+            return "behavior";
+        return null;
+    }
+
+    private static bool MatchingThreat(Entry detection, Entry action)
+    {
+        var detectedThreat = detection.Field("Threat ID");
+        var actionThreat = action.Field("Threat ID");
+        return string.IsNullOrEmpty(detectedThreat) || string.IsNullOrEmpty(actionThreat) || detectedThreat == actionThreat;
+    }
+
+    private static string? ThreatName(Entry entry) => Validated(entry.Field("Threat Name"),
+        @"[A-Za-z][A-Za-z0-9]{1,31}:[A-Za-z0-9_-]{1,24}/[A-Za-z0-9][A-Za-z0-9_.!@+-]{0,100}");
+
     public static IEnumerable<ReviewFinding> ReviewFindings(IReadOnlyList<(string Mode, ReplayEvent Item)> events)
     {
         foreach (var group in DetectionGroups(events))
@@ -85,8 +143,7 @@ internal static class ScanEvidence
                 detectedUtc = detection?.Item.OccurredUtc, source = SourceName(identity),
                 threatId = ulong.TryParse(identity.Field("Threat ID"), NumberStyles.None,
                     CultureInfo.InvariantCulture, out var threat) ? threat.ToString(CultureInfo.InvariantCulture) : null,
-                threatName = Validated(identity.Field("Threat Name"),
-                    @"[A-Za-z][A-Za-z0-9]{1,31}:[A-Za-z0-9_-]{1,24}/[A-Za-z0-9][A-Za-z0-9_.!@+-]{0,100}"),
+                threatName = ThreatName(identity),
                 engineVersion = VersionText(identity.Field("Engine Version")),
                 signatureVersion = VersionText(identity.Field("Security intelligence Version") ?? identity.Field("Signature Version")),
                 action = latest?.action, actionStatus = latest?.actionStatus ?? "unknown",

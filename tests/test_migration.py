@@ -76,7 +76,7 @@ class MigrationTests(unittest.TestCase):
                 job.result()
 
         with closing(sqlite3.connect(self.case)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 5)
             self.assertEqual(db.execute("SELECT count(*) FROM observations").fetchone()[0], 2)
             # Seed a synthetic live record so this compatibility test works without Defender.
             db.execute("UPDATE observations SET origin = 'live' WHERE record_id = 42")
@@ -97,6 +97,7 @@ class MigrationTests(unittest.TestCase):
                 DROP TABLE reviews;
                 DROP TABLE startup_snapshots;
                 DROP TABLE task_reviews;
+                DROP TABLE fileless_followups;
                 PRAGMA user_version = 2;
                 INSERT INTO scan_requests (id, device, kind, requested_utc)
                 VALUES ('sample-request', 'LAB-PC', 'quick', '2026-11-20T12:00:00Z');
@@ -111,7 +112,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(updated["scanRequests"], report["scanRequests"])
         self.assertEqual(updated["observations"], report["observations"])
         with closing(sqlite3.connect(self.case)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 4)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 5)
 
 
     def test_startup_inventory_diff_keeps_legitimate_and_unfamiliar_entries(self):

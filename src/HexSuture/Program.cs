@@ -21,6 +21,8 @@ const string usage = """
       HexSuture scan <case.db> quick
       HexSuture scan <case.db> full
       HexSuture history
+      HexSuture fileless collect <case.db> [--minutes <1-1440>]
+      HexSuture fileless check-task <case.db> <finding-id> <task-review-id>
       HexSuture startup import <case.db> <baseline|current> <csv> --device <name> --scope <scope>
       HexSuture startup diff <case.db>
       HexSuture task review <case.db> <task-path> --reason <text>
@@ -58,6 +60,21 @@ try
             using (var store = new CaseStore(database, create: false))
                 WriteReport(store, export, details, checkFile);
             return 0;
+        case ["fileless", "collect", _]:
+        case ["fileless", "collect", _, "--minutes", _]:
+            if (!OperatingSystem.IsWindows())
+                throw new ArgumentException("Live Defender event collection requires Windows.");
+            int minutes = 60;
+            if (args.Length == 5 && (!int.TryParse(args[4], NumberStyles.None, CultureInfo.InvariantCulture,
+                out minutes) || minutes is < 1 or > 1440))
+                throw new ArgumentException("Choose a collection window from 1 to 1440 minutes.");
+            using (var store = new CaseStore(args[2], create: true))
+                return DefenderEvents.CaptureThreatEvents(store, minutes);
+        case ["fileless", "check-task", var database, var findingId, var taskId]:
+            if (!OperatingSystem.IsWindows())
+                throw new ArgumentException("Checking a live related task requires Windows.");
+            using (var store = new CaseStore(database, create: true, allowCreate: false))
+                return FilelessReview.CheckTask(store, findingId, taskId);
         case ["startup", "import", var database, ("baseline" or "current") and var slot, var csv,
               "--device", var device, "--scope", var scope]:
             var snapshot = StartupInventory.Read(csv, device, scope);
@@ -225,6 +242,9 @@ static void WriteReport(CaseStore store, bool export, bool details, string? chec
         }),
         scans = ScanEvidence.Scans(events),
         detections = ScanEvidence.Detections(events, includePaths),
+        fileless = FilelessReview.Report(ScanEvidence.FilelessFindings(events),
+            store.FilelessFollowUps(), store.Task, includePaths),
+        filelessMemoryCoverage = "unknown",
         reviewQueue = FalsePositiveReview.Queue(ScanEvidence.ReviewFindings(events), reviews, now, checkFile),
         reviews = reviews.Select(review => new
         {

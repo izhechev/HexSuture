@@ -214,6 +214,51 @@ class ScanEvidenceTests(unittest.TestCase):
         self.assertEqual(len(json.loads(self.cli("show"))["reviews"]), 2)
 
 
+    def test_fileless_timeline_requires_matched_success(self):
+        evidence = {"Detection ID": DETECTION, "Source ID": "2", "Source Name": "System",
+                    "Threat ID": "2147694217", "Threat Name": "Virus:Win32/MpTest!amsi",
+                    "Process Name": r"C:\Users\lab-user\powershell.exe",
+                    "Path": "amsi:_private-resource", "ScriptBlockText": "private script text"}
+        action = {"Detection ID": DETECTION, "Threat ID": "2147694217", "Action ID": "2"}
+
+        def finding():
+            report = json.loads(self.cli("show"))
+            self.assertEqual(report["filelessMemoryCoverage"], "unknown")
+            item, = report["fileless"]
+            self.assertEqual((item["mode"], item["source"], item["kind"]), ("replay", "system-initiated", "amsi"))
+            self.assertEqual(item["processName"], "powershell.exe")
+            self.assertIsNone(item["processPath"])
+            self.assertNotIn("private script text", json.dumps(item))
+            return item
+
+        self.event(1117, 1, action)
+        self.event(1116, 2, evidence)
+        self.assertEqual(finding()["status"], "open")
+        self.event(1117, 3, {**action, "Action ID": "6"})
+        self.assertEqual((finding()["remediation"], finding()["status"]), ("unremediated", "open"))
+        self.event(1118, 4, action)
+        self.assertEqual((finding()["remediation"], finding()["status"]), ("failed", "open"))
+        self.event(1117, 5, action, device="OTHER-PC")
+        self.event(1117, 6, {**action, "Detection ID": OTHER_DETECTION})
+        self.event(1117, 7, {**action, "Threat ID": "42"})
+        self.assertEqual(finding()["status"], "open")
+        self.event(1117, 8, {**action, "Status Code": "3", "Error Code": "0x00000000"})
+        self.assertEqual((finding()["remediation"], finding()["status"]), ("remediated", "closed"))
+        self.assertEqual([row["recordId"] for row in finding()["timeline"]], [2, 3, 4, 8])
+        self.event(1116, 9, evidence)
+        self.assertEqual((finding()["remediation"], finding()["status"]), ("unknown", "open"))
+
+    def test_behavior_evidence_and_ordinary_powershell(self):
+        self.event(1116, 1, {"Process Name": "powershell.exe", "Threat Name": "Virus:Win32/Generic"})
+        self.event(1015, 2, {"Detection ID": DETECTION, "Process Name": "powershell.exe",
+                             "Threat Name": "Behavior:Win32/SyntheticFixture"})
+        self.event(1117, 3, {"Detection ID": DETECTION, "Action ID": "10"})
+        finding, = json.loads(self.cli("show"))["fileless"]
+        self.assertEqual((finding["kind"], finding["remediation"], finding["status"]),
+                         ("behavior", "blocked", "open"))
+        self.assertEqual([row["eventId"] for row in finding["timeline"]], [1015, 1117])
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dll", type=Path, nargs="?", default=ScanEvidenceTests.dll)

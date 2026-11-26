@@ -5,7 +5,7 @@ namespace HexSuture;
 internal sealed partial class CaseStore : IDisposable
 {
     private const int ApplicationId = 0x48585355;
-    private const int SchemaVersion = 4;
+    private const int SchemaVersion = 5;
     private const string CreateObservations = """
         CREATE TABLE observations_v2 (
             device TEXT NOT NULL COLLATE NOCASE,
@@ -99,10 +99,15 @@ internal sealed partial class CaseStore : IDisposable
                 command.CommandText = CreateReviews;
                 command.ExecuteNonQuery();
             }
+            if (version < 4 && create)
+            {
+                command.CommandText = CreatePersistence;
+                command.ExecuteNonQuery();
+            }
             if (version < SchemaVersion && create)
             {
                 command.CommandText = $"""
-                    {CreatePersistence}
+                    {CreateFilelessFollowUps}
                     PRAGMA user_version = {SchemaVersion};
                     """;
                 command.ExecuteNonQuery();
@@ -152,6 +157,7 @@ internal sealed partial class CaseStore : IDisposable
                     {CreateScanRequests}
                     {CreateReviews}
                     {CreatePersistence}
+                    {CreateFilelessFollowUps}
                     CREATE TABLE source_gaps (
                         source_name TEXT NOT NULL,
                         reason TEXT NOT NULL,

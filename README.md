@@ -96,6 +96,27 @@ Use a fresh review for the removal path if you already rolled back. After a rest
 
 The hosted Windows test uses a disposable task with no triggers. The task workflow tests use simulated restarts to exercise post-restart verification, removal and interrupted requests. To verify the full sequence with Windows itself, use a dedicated test PC or VM and run the verification and removal commands after an actual restart.
 
+## Follow a fileless detection through cleanup
+
+Collect recent Defender detections and actions on the affected Windows computer. Use `import` for saved Defender event XML. The report marks saved events as replay and local collection as live evidence.
+
+```powershell
+dotnet run --project src/HexSuture -- fileless collect case.db --minutes 60
+dotnet run --project src/HexSuture -- show case.db
+```
+
+Look under `fileless` for the reported detection source, process name when available, and the detection and action timeline. A Defender AMSI resource or the Microsoft AMSI test signature can identify the kind of detection even when Defender reports the source as system-initiated. Defender can also report behavior evidence through event 1015 or a behavior signature. Running PowerShell alone does not produce a fileless finding. Full process paths are available with `show --paths`. The report keeps memory coverage as unknown. [Microsoft AMSI demonstration](https://learn.microsoft.com/en-us/defender-endpoint/mde-demonstration-amsi) · [Defender event definitions](https://learn.microsoft.com/en-us/defender-endpoint/troubleshoot-microsoft-defender-antivirus)
+
+If Defender asks you to respond, use `history` to open Windows Security and follow the actions it offers for that detection. Collect again to check the result. A successful clean, quarantine or removal closes the affected finding when the action matches the detection and the related task checks are clear. Allow, failed cleanup, a missing action or a fresh detection keeps it open. [Windows Security Protection History](https://support.microsoft.com/en-us/windows/security/windows-security/protection-history-in-the-windows-security-app)
+
+If you confirmed a related scheduled task, review it with `task review` and record a live follow-up. Use the fileless finding ID and the task review ID from the same case.
+
+```powershell
+dotnet run --project src/HexSuture -- fileless check-task case.db "<finding-id>" "<task-review-id>"
+```
+
+An active task keeps the finding open. After using the task workflow to verify disablement after a restart or to remove the registration, run the follow-up again. HexSuture records the observed state and timestamp. A later task journal change requires a fresh follow-up.
+
 ## Run the acceptance tests
 
 The tests use Python 3 and start a fresh copy of the CLI for each command. They use temporary case files and the synthetic XML sample.

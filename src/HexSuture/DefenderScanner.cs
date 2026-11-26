@@ -1,7 +1,5 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Diagnostics.Eventing.Reader;
-using System.Globalization;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -12,8 +10,6 @@ namespace HexSuture;
 
 internal static class DefenderScanner
 {
-    private const string Channel = "Microsoft-Windows-Windows Defender/Operational";
-    private const int EventLimit = 4096;
 
     internal static int Run(CaseStore store, string kind, string? folder)
     {
@@ -210,7 +206,7 @@ internal static class DefenderScanner
         if (folder is not null)
         {
             var matchingIds = new HashSet<Guid>();
-            CollectWindow(requested.AddMinutes(-10), requested, detectionsOnly: true, item =>
+            DefenderEvents.CollectWindow(requested.AddMinutes(-10), requested, detectionsOnly: true, item =>
             {
                 var facts = JsonSerializer.Deserialize<Dictionary<string, string>>(item.FactsJson)!;
                 facts.TryGetValue("Detection ID", out var id);
@@ -223,7 +219,7 @@ internal static class DefenderScanner
             }, Flag);
         }
 
-        CollectWindow(requested, DateTime.UtcNow, detectionsOnly: false, item =>
+        DefenderEvents.CollectWindow(requested, DateTime.UtcNow, detectionsOnly: false, item =>
         {
             store.AddLive(item);
             sawTerminal |= item.EventId is 1001 or 1002;
@@ -231,47 +227,6 @@ internal static class DefenderScanner
         if (!sawTerminal)
             Flag("No finished or stopped scan event was observed in the request window.");
         return complete;
-    }
-
-    [SupportedOSPlatform("windows")]
-    private static void CollectWindow(DateTime start, DateTime end, bool detectionsOnly,
-        Action<ReplayEvent> observe, Action<string> flag)
-    {
-        string ids = "EventID=1116 or EventID=1117 or EventID=1118 or EventID=1119";
-        if (!detectionsOnly)
-            ids += " or EventID=1000 or EventID=1001 or EventID=1002";
-        string from = start.ToString("O", CultureInfo.InvariantCulture);
-        string to = end.ToString("O", CultureInfo.InvariantCulture);
-        string filter = $"*[System[Provider[@Name='Microsoft-Windows-Windows Defender'] and " +
-            $"TimeCreated[@SystemTime >= '{from}' and @SystemTime <= '{to}'] and ({ids})]]";
-        try
-        {
-            var query = new EventLogQuery(Channel, PathType.LogName, filter);
-            using var reader = new EventLogReader(query);
-            for (int count = 0; ; count++)
-            {
-                using var record = reader.ReadEvent();
-                if (record is null)
-                    break;
-                if (count == EventLimit)
-                {
-                    flag($"More than {EventLimit} relevant Defender events occurred in the capture window.");
-                    break;
-                }
-                try
-                {
-                    observe(ReplayEvent.ReadXml(record.ToXml()));
-                }
-                catch (InvalidDataException ex)
-                {
-                    flag("Unreadable or conflicting Defender event: " + ex.Message);
-                }
-            }
-        }
-        catch (Exception ex) when (ex is EventLogException or UnauthorizedAccessException or System.Security.SecurityException)
-        {
-            flag("Could not read the Defender Operational log: " + ex.Message);
-        }
     }
 
     private static bool MentionsFolder(string paths, string folder)

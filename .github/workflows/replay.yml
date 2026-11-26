@@ -70,6 +70,9 @@ jobs:
         run: |
           $root = (Get-Content -LiteralPath "$env:RUNNER_TEMP/hexsuture-drive.txt" -Raw).Trim()
           python tests/live_scan.py src/HexSuture/bin/Release/net10.0/HexSuture.dll --eicar --parent $root
+      - name: Capture Microsoft's harmless AMSI test
+        shell: pwsh
+        run: ./tests/live_amsi.ps1 src/HexSuture/bin/Release/net10.0/HexSuture.dll
       - name: Diagnose Defender coverage on the disposable runner
         if: failure()
         shell: pwsh
