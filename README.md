@@ -184,6 +184,10 @@ dotnet run --project src/HexSuture -- boot import-state review.db samples/boot-a
 dotnet run --project src/HexSuture -- show review.db
 ```
 
+## Release evidence
+
+Open the latest successful [HexSuture tests workflow](https://github.com/izhechev/HexSuture/actions/workflows/replay.yml) and download the `hexsuture-release-evidence` artifact. It contains a redacted case, the restore manifest, startup changes and the results from that commit’s Windows checks. See the [evidence guide](docs/release-evidence.md) for what each file shows and how to reproduce the bundle.
+
 ## Run the acceptance tests
 
 The tests use Python 3 and start a fresh copy of the CLI for each command. They use temporary case files and the synthetic XML sample.
