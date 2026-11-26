@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#111a2e">
+<title>HexSuture | Windows incident replay</title>
+<meta name="description" content="Explore a synthetic HexSuture case from a Microsoft Defender scan to a verified file restore.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="HexSuture | Windows incident replay">
+<meta property="og:description" content="Review a Defender finding, compare two backup restores, or watch the 36-second walkthrough.">
+<meta property="og:url" content="https://izhechev.github.io/HexSuture/">
+<meta property="og:image" content="https://izhechev.github.io/HexSuture/assets/recovery-preview.jpg">
+<style>
+@font-face {
+  font-family: Geist;
+  src: url("assets/geist.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root {
+  color-scheme: dark;
+  scrollbar-color: #536786 var(--back);
+  --back: #111a2e;
+  --panel: #18233b;
+  --raised: #202e49;
+  --ink: #eef3fb;
+  --muted: #adbed7;
+  --line: #354561;
+  --mint: #a5eed1;
+  --sand: #ffcf9e;
+  --blue: #b2c9fc;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-family: Geist, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+::selection { background: var(--blue); color: #142846; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--back); color: var(--ink); line-height: 1.55; }
+a { color: var(--blue); text-underline-offset: 4px; }
+a:hover { color: white; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 3px solid var(--mint); outline-offset: 4px; }
+.wrap { width: min(1180px, calc(100% - 80px)); margin-inline: auto; }
+.top { display: flex; min-height: 76px; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: 750; letter-spacing: -.035em; }
+.brand mark { width: 29px; height: 29px; border: 1px solid #677dad; border-radius: 7px; background: #24395b; color: var(--mint); display: grid; place-items: center; font: 700 16px var(--mono); }
+.version { font: 12px var(--mono); color: var(--muted); margin-inline-start: 3px; letter-spacing: 0; }
+.top a { font-size: 14px; font-weight: 600; }
+.intro { display: flex; align-items: flex-end; justify-content: space-between; padding: 36px 0 30px; gap: 26px; }
+h1, h2, p { margin: 0; }
+h1 { font-size: clamp(2.25rem, 5.1vw, 4.55rem); line-height: 1; letter-spacing: -.04em; text-wrap: balance; }
+.intro p { margin-top: 14px; color: var(--muted); max-width: 520px; }
+.mode { flex: none; display: inline-flex; align-items: center; gap: 9px; padding: 6px 11px; border: 1px solid #4c6286; border-radius: 6px; color: var(--blue); font-size: 13px; font-weight: 650; }
+.mode::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--blue); }
+.console { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.console-head { min-height: 58px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 10px 18px; gap: 10px; border-bottom: 1px solid var(--line); }
+.console-name { font-weight: 680; display: flex; align-items: center; gap: 10px; }
+.terminal { background: var(--back); border: 1px solid var(--line); border-radius: 4px; color: var(--mint); padding: 2px 6px; font: 13px var(--mono); }
+.action { border: 1px solid #557099; border-radius: 6px; padding: 8px 14px; background: transparent; min-height: 40px; font-size: 14px; font-weight: 650; }
+.action:hover { background: #2a3f61; }
+.action:disabled { color: #8394af; cursor: default; border-color: var(--line); background: transparent; }
+.action.primary { background: var(--mint); color: #122e2b; border-color: var(--mint); }
+.action.primary:hover { background: #caf8e6; }
+.top nav { display: flex; gap: 20px; flex-wrap: wrap; }
+.top nav a { color: var(--ink); }
+.top nav span { color: var(--muted); font-variant-numeric: tabular-nums; margin-inline-start: 3px; }
+.console-body { display: grid; grid-template-columns: 226px minmax(0, 1fr); min-height: 402px; }
+.steps { margin: 0; padding: 17px 12px; list-style: none; border-right: 1px solid var(--line); background: #141f35; }
+.steps li + li { margin-top: 6px; }
+.step { border: 1px solid transparent; background: transparent; display: flex; align-items: center; gap: 10px; padding: 11px 10px; border-radius: 7px; text-align: left; width: 100%; min-height: 60px; color: var(--muted); }
+.step:hover { background: var(--panel); color: var(--ink); }
+.step[aria-current="step"] { border-color: #5674a0; background: #243958; color: var(--ink); }
+.step b, .step small { display: block; line-height: 1.3; }
+.step b { font-size: 14px; }
+.step small { font-size: 12px; margin-top: 4px; }
+.step .step-no { display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; width: 27px; height: 27px; flex: none; font: 12px var(--mono); }
+.step[aria-current="step"] .step-no { background: var(--blue); color: #142846; border-color: var(--blue); }
+.evidence { padding: 25px 30px 20px; min-width: 0; }
+.case-meta { color: var(--blue); font: 12px var(--mono); display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 8px; }
+.case-meta span + span { color: var(--muted); border-left: 1px solid var(--line); padding-inline-start: 12px; }
+h2 { font-size: clamp(1.7rem, 3vw, 2.5rem); line-height: 1.08; letter-spacing: -.035em; }
+.explain { color: var(--muted); font-size: 15px; margin: 9px 0 19px; max-width: 65ch; }
+.sheet { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.record { padding: 13px 15px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.record + .record { border-top: 1px solid var(--line); }
+.record-title { font-weight: 650; font-size: 15px; overflow-wrap: anywhere; }
+.detail { color: var(--muted); font-size: 13px; margin-top: 3px; overflow-wrap: anywhere; }
+.pill { flex: none; display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: 12px; font-weight: 700; line-height: 1.65; }
+.good { color: var(--mint); background: #244440; }
+.warn { color: var(--sand); background: #4a3531; }
+.info { color: var(--blue); background: #293e61; }
+.note { display: flex; align-items: flex-start; gap: 9px; color: var(--muted); font-size: 13px; margin-top: 13px; }
+.note::before { content: "i"; display: grid; place-items: center; flex: none; width: 16px; height: 16px; border: 1px solid #7184a9; border-radius: 50%; font: 11px var(--mono); margin-top: 2px; }
+.callout { background: #202f48; border-radius: 7px; padding: 10px 14px; margin-top: 13px; }
+.callout code { color: var(--mint); }
+code { font: .85em var(--mono); overflow-wrap: anywhere; }
+.switches { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 12px; }
+.switches button { font-size: 13px; min-height: 38px; }
+.switches [aria-pressed="true"] { color: var(--blue); border-color: #7e9ac8; background: #263b60; }
+.restore { padding: 13px 14px; border: 1px solid var(--line); border-radius: 8px; background: #141f35; }
+.restore-head { display: flex; justify-content: space-between; gap: 5px 12px; flex-wrap: wrap; align-items: center; }
+.restore-head strong { font-size: 22px; letter-spacing: -.04em; line-height: 1.2; }
+.restore-head span { font-size: 12px; color: var(--muted); }
+.blocks { display: grid; grid-template-columns: repeat(20, minmax(0, 1fr)); gap: 4px; margin: 11px 0 0; }
+.blocks span { display: grid; place-items: center; font: 700 12px var(--mono); height: 22px; border-radius: 3px; background: #315a57; color: #c4ffe3; }
+.blocks .mismatch { background: #644639; color: #ffe0b9; }
+.hashes { display: grid; grid-template-columns: auto minmax(0,1fr); font-size: 12px; gap: 4px 12px; margin: 8px 0 1px; }
+.hashes dt { color: var(--muted); }
+.hashes dd { margin: 0; }
+.console-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 61px; padding: 10px 18px; border-top: 1px solid var(--line); }
+.foot-status { color: var(--muted); font-size: 13px; }
+.controls { display: flex; gap: 8px; }
+.progress { height: 3px; background: var(--line); }
+.progress span { display: block; height: 100%; width: 20%; background: var(--mint); transition: width .24s ease-out; }
+.video-section {
+  display: grid;
+  grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr);
+  gap: 24px 48px;
+  align-items: start;
+  margin: 44px 0 32px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 16px;
+}
+.video-copy h2 { font-size: clamp(1.7rem, 3vw, 2.2rem); }
+.video-copy p { margin-block: 10px 16px; color: var(--muted); max-width: 36ch; }
+.video-copy a { font-size: 14px; }
+video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1280 / 900;
+  object-fit: contain;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.source { padding: 19px 0 36px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+.source summary { cursor: pointer; width: fit-content; color: var(--ink); }
+.source-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 36px; padding: 15px 0 0; }
+.source-grid strong { color: var(--ink); }
+.source-grid ul { margin: 5px 0 0; padding-inline-start: 18px; }
+.source-links { margin-top: 12px; display: flex; gap: 16px; flex-wrap: wrap; }
+@media (max-width: 780px) {
+  .wrap { width: calc(100% - 36px); }
+  .intro { align-items: flex-start; flex-direction: column; gap: 12px; padding-block: 28px 20px; }
+  .console-body { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; border-right: 0; border-bottom: 1px solid var(--line); padding: 9px; }
+  .steps li + li { margin: 0; }
+  .step { display: flex; flex-direction: column; gap: 5px; min-height: 64px; padding: 6px 3px; text-align: center; }
+  .step b { font-size: 12px; }
+  .step small { display: none; }
+  .step .step-no { width: 22px; height: 22px; }
+  .video-section { grid-template-columns: 1fr; gap: 16px; margin-top: 34px; }
+  .evidence { min-height: 370px; padding: 21px 17px; }
+}
+@media (max-width: 460px) {
+  .wrap { width: calc(100% - 24px); }
+  .top { min-height: 62px; }
+  .brand { gap: 7px; }
+  .version { font-size: 10px; }
+  .top nav { gap: 4px 12px; justify-content: flex-end; }
+  .top a { font-size: 12px; }
+  .console-head, .console-foot { padding-inline: 10px; }
+  .console-name { font-size: 13px; gap: 5px; }
+  .action { padding-inline: 8px; font-size: 13px; }
+  .record { align-items: flex-start; padding-inline: 10px; }
+  .record-title { font-size: 14px; }
+  .pill { font-size: 11px; }
+  .blocks { grid-template-columns: repeat(10, 1fr); }
+  .source-grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { .progress span { transition: none; } }
+</style>
+</head>
+<body>
+<header class="wrap top">
+  <div class="brand"><mark aria-hidden="true">&gt;_</mark> HexSuture <span class="version">v0.1.0</span></div>
+  <nav aria-label="Demo and release">
+    <a href="#video">Watch video <span>0:36</span></a>
+    <a href="https://github.com/izhechev/HexSuture/releases/tag/v0.1.0">GitHub release</a>
+  </nav>
+</header>
+<main class="wrap">
+  <div class="intro">
+    <div><h1>Windows incident replay</h1><p>Follow a HexSuture case from a Defender scan to a backup restore. See what Defender handled and what still needs review.</p></div>
+    <span class="mode">Synthetic Windows case</span>
+  </div>
+  <section class="console" aria-label="Incident walkthrough" id="walkthrough">
+    <div class="console-head">
+      <span class="console-name"><span class="terminal" aria-hidden="true">&gt;_</span> Case walkthrough</span>
+      <button class="action primary" id="play" type="button"><span id="play-label">Play walkthrough</span></button>
+    </div>
+    <div class="console-body">
+      <ol class="steps" aria-label="Walkthrough steps">
+        <li><button class="step" type="button" aria-current="step" aria-controls="scan"><span class="step-no" aria-hidden="true">1</span><span><b>Scan</b><small>File and review</small></span></button></li>
+        <li><button class="step" type="button" aria-controls="scripts"><span class="step-no" aria-hidden="true">2</span><span><b>Scripts</b><small>Defender actions</small></span></button></li>
+        <li><button class="step" type="button" aria-controls="startup"><span class="step-no" aria-hidden="true">3</span><span><b>Startup</b><small>Scheduled tasks</small></span></button></li>
+        <li><button class="step" type="button" aria-controls="boot"><span class="step-no" aria-hidden="true">4</span><span><b>Boot</b><small>Secure Boot and offline scan</small></span></button></li>
+        <li><button class="step" type="button" aria-controls="recovery"><span class="step-no" aria-hidden="true">5</span><span><b>Recovery</b><small>Ransomware and restore</small></span></button></li>
+      </ol>
+      <div class="evidence">
+<section id="scan" aria-labelledby="scan-title"><p class="case-meta"><span>LAB-PC</span><span>Microsoft Defender</span></p><h2 id="scan-title">A scan and a false positive</h2><p class="explain">HexSuture puts the recorded scan result and the reviewer’s decision in one case.</p><div class="sheet"><div class="record"><div><div class="record-title">Custom folder scan</div><p class="detail">Completed at 09:10:11 UTC · Event record 42</p></div><span class="pill good">Completed</span></div><div class="record"><div><div class="record-title"><code>Test:Win32/BenignFixture</code></div><p class="detail">Decision applies to this file hash · Expires 26 Dec 2026</p></div><span class="pill good">Benign</span></div></div><div class="callout"><div class="detail">Reviewed file SHA-256</div><code>70ae62cebb094958371a0d90c5ac1bfd69da61574a225ce3e65e42f861c400ee</code></div></section>
+<section id="scripts" aria-labelledby="scripts-title" hidden><p class="case-meta"><span>LAB-PC</span><span>Defender AMSI events</span></p><h2 id="scripts-title">Two scripts, two outcomes</h2><p class="explain">HexSuture links each script detection to the action Defender recorded for it.</p><div class="sheet"><div class="record"><div><div class="record-title"><code>Trojan:Win32/ScriptFixture0</code></div><p class="detail"><code>powershell.exe</code> · Detected at 10:00:01 UTC · Action record 102</p></div><span class="pill good">Quarantined</span></div><div class="record"><div><div class="record-title"><code>Trojan:Win32/ScriptFixture1</code></div><p class="detail"><code>powershell.exe</code> · Detected at 10:00:03 UTC · Action record 104</p></div><span class="pill warn">Allowed · Open</span></div></div><p class="note">Both findings stay in the human review queue. Defender reports remediation only for the quarantined script.</p></section>
+<section id="startup" aria-labelledby="startup-title" hidden><p class="case-meta"><span>LAB-PC</span><span>Autorunsc inventory comparison</span></p><h2 id="startup-title">What changed at startup</h2><p class="explain">Comparing two snapshots shows one updated task and one new task to review.</p><div class="sheet"><div class="record"><div><div class="record-title">Document Updater</div><p class="detail">Task Scheduler · Version 1.0 → 1.1</p></div><span class="pill info">Changed</span></div><div class="record"><div><div class="record-title">Review Fixture</div><p class="detail">Task Scheduler · Present only in the newer snapshot</p></div><span class="pill warn">Added</span></div></div><p class="note">A new task can be legitimate. Review it before taking action.</p></section>
+<section id="boot" aria-labelledby="boot-title" hidden><p class="case-meta"><span>BOOT-LAB</span><span>Boot baseline and Defender events</span></p><h2 id="boot-title">Boot findings need review</h2><p class="explain">HexSuture shows the Secure Boot change alongside a rootkit alert and the Offline scan record.</p><div class="sheet"><div class="record"><div><div class="record-title">Secure Boot</div><p class="detail">Baseline enabled → now disabled</p></div><span class="pill warn">Changed</span></div><div class="record"><div><div class="record-title"><code>Rootkit:Win32/ReplayFixture</code></div><p class="detail">Early Launch Anti-Malware · Event record 61</p></div><span class="pill warn">Needs review</span></div><div class="record"><div><div class="record-title">Defender Offline</div><p class="detail">Scheduled at 09:15:00 UTC · Restart at 09:30:00 UTC</p></div><span class="pill warn">Outcome unknown</span></div></div></section>
+<section id="recovery" aria-labelledby="recovery-title" hidden><p class="case-meta"><span>LAB-PC</span><span>Controlled Folder Access and backup verification</span></p><h2 id="recovery-title">Which files can be restored?</h2><p class="explain">HexSuture linked 6 audited and 4 blocked writes to a Defender ransomware alert. Compare the two backup checks.</p><div class="switches" role="group" aria-label="Backup copies"><button class="action" type="button" data-restore aria-pressed="true">Original backup</button><button class="action" type="button" data-restore aria-pressed="false">Altered backup</button></div><div class="restore" aria-live="polite"><div class="restore-head"><strong>20 of 20 files verified</strong><span>SHA-256 verification</span></div><div aria-hidden="true" class="blocks"><span title="documents/report-00.txt · Verified">✓</span><span title="documents/report-01.txt · Verified">✓</span><span title="documents/report-02.txt · Verified">✓</span><span title="documents/report-03.txt · Verified">✓</span><span title="documents/report-04.txt · Verified">✓</span><span title="documents/report-05.txt · Verified">✓</span><span title="documents/report-06.txt · Verified">✓</span><span title="documents/report-07.txt · Verified">✓</span><span title="documents/report-08.txt · Verified">✓</span><span title="documents/report-09.txt · Verified">✓</span><span title="documents/report-10.txt · Verified">✓</span><span title="documents/report-11.txt · Verified">✓</span><span title="documents/report-12.txt · Verified">✓</span><span title="documents/report-13.txt · Verified">✓</span><span title="documents/report-14.txt · Verified">✓</span><span title="documents/report-15.txt · Verified">✓</span><span title="documents/report-16.txt · Verified">✓</span><span title="documents/report-17.txt · Verified">✓</span><span title="documents/report-18.txt · Verified">✓</span><span title="documents/report-19.txt · Verified">✓</span></div><p class="detail">Every restored file matched the expected SHA-256.</p></div><div class="restore" aria-live="polite" hidden><div class="restore-head"><strong>19 of 20 files verified</strong><span>SHA-256 verification</span></div><div aria-hidden="true" class="blocks"><span title="documents/report-00.txt · Verified">✓</span><span title="documents/report-01.txt · Verified">✓</span><span title="documents/report-02.txt · Verified">✓</span><span title="documents/report-03.txt · Verified">✓</span><span class="mismatch" title="documents/report-04.txt · Withheld">!</span><span title="documents/report-05.txt · Verified">✓</span><span title="documents/report-06.txt · Verified">✓</span><span title="documents/report-07.txt · Verified">✓</span><span title="documents/report-08.txt · Verified">✓</span><span title="documents/report-09.txt · Verified">✓</span><span title="documents/report-10.txt · Verified">✓</span><span title="documents/report-11.txt · Verified">✓</span><span title="documents/report-12.txt · Verified">✓</span><span title="documents/report-13.txt · Verified">✓</span><span title="documents/report-14.txt · Verified">✓</span><span title="documents/report-15.txt · Verified">✓</span><span title="documents/report-16.txt · Verified">✓</span><span title="documents/report-17.txt · Verified">✓</span><span title="documents/report-18.txt · Verified">✓</span><span title="documents/report-19.txt · Verified">✓</span></div><p class="detail"><code>documents/report-04.txt</code> withheld because its SHA-256 changed.</p><dl class="hashes"><dt>Expected</dt><dd><code>9db45902eab6ea2e8194f862bd8f9a3921a93d3b6fa5c44ec7998c1af7d17383</code></dd><dt>Found</dt><dd><code>5b27f35fe14a67edfaa0604010b1ffb99f8f8206d946a5d57949e22039f31396</code></dd></dl></div></section>
+      </div>
+    </div>
+    <div class="console-foot">
+      <span class="foot-status" id="step-status" role="status">Step 1 of 5</span>
+      <div class="controls">
+        <button class="action" id="previous" type="button" disabled>Previous</button>
+        <button class="action" id="next" type="button">Next</button>
+      </div>
+    </div>
+    <div class="progress" aria-hidden="true"><span id="progress"></span></div>
+  </section>
+  <section class="video-section" id="video" aria-labelledby="video-title">
+    <div class="video-copy">
+      <h2 id="video-title">36-second walkthrough</h2>
+      <p id="video-description">Silent footage of the scan, script findings, startup and boot checks, and both restore results.</p>
+      <a href="assets/hexsuture-walkthrough.mp4" download>Download the MP4</a>
+    </div>
+    <video controls playsinline preload="none" poster="assets/recovery-preview.jpg" width="1280" height="900" aria-labelledby="video-title" aria-describedby="video-description">
+      <source src="assets/hexsuture-walkthrough.mp4" type="video/mp4">
+    </video>
+  </section>
+  <details class="source">
+    <summary>Release evidence and live Windows coverage</summary>
+    <div class="source-grid">
+      <div><strong>Passed on Windows</strong><ul><li>Folder scan of 100 benign files and EICAR test file attribution</li><li>Task Scheduler disable and rollback</li><li>Defender events, folder protection settings and read-only Secure Boot</li></ul></div>
+      <div><strong>Still needs live Windows testing</strong><ul><li>AMSI on a supported Defender for Endpoint machine</li><li>Defender Offline through a Windows 11 x64 restart</li><li>Scheduled task removal after a real restart</li><li>Live folder protection audit and block events</li><li>Defender quick, full and stopped scan workflows</li></ul></div>
+    </div>
+    <div class="source-links"><a href="https://github.com/izhechev/HexSuture/releases/download/v0.1.0/hexsuture-v0.1.0-release-evidence.zip">Download evidence</a><a href="https://github.com/izhechev/HexSuture/actions/runs/45880373968">View Windows test run</a></div>
+  </details>
+</main>
+<script>
+const sections = [...document.querySelectorAll(".step")].map(button => ({
+  button,
+  panel: document.getElementById(button.getAttribute("aria-controls"))
+}));
+const play = document.getElementById("play");
+const playLabel = document.getElementById("play-label");
+const previous = document.getElementById("previous");
+const next = document.getElementById("next");
+const progress = document.getElementById("progress");
+const stepStatus = document.getElementById("step-status");
+const walkthrough = document.getElementById("walkthrough");
+const countdown = [6500, 7000, 6000, 7000, 5200];
+let current = 0;
+let timer;
+let playing = false;
+let completed = false;
+let restoreIndex = 0;
+
+function showStep(index) {
+  current = index;
+  sections.forEach(({ button, panel }, position) => {
+    const active = position === current;
+    if (active) button.setAttribute("aria-current", "step");
+    else button.removeAttribute("aria-current");
+    panel.hidden = !active;
+  });
+  previous.disabled = index === 0;
+  next.disabled = index === sections.length - 1;
+  const name = sections[index].button.querySelector("b").textContent;
+  stepStatus.textContent = `Step ${index + 1} of ${sections.length} · ${name}`;
+  progress.style.width = `${(index + 1) / sections.length * 100}%`;
+}
+
+function showPlayback() {
+  playLabel.textContent = playing ? "Pause walkthrough" : completed ? "Replay walkthrough" : "Play walkthrough";
+}
+
+function pause() {
+  playing = false;
+  clearTimeout(timer);
+  showPlayback();
+}
+
+function schedule() {
+  timer = setTimeout(() => {
+    if (current === sections.length - 1 && restoreIndex === 0) {
+      showRestore(1);
+      schedule();
+      return;
+    }
+    if (current === sections.length - 1) {
+      completed = true;
+      pause();
+      return;
+    }
+    showStep(current + 1);
+    if (current === sections.length - 1) showRestore(0);
+    schedule();
+  }, countdown[current]);
+}
+
+function pick(index) {
+  pause();
+  completed = false;
+  showPlayback();
+  showStep(index);
+}
+
+const restoreButtons = [...document.querySelectorAll("[data-restore]")];
+const restoreRuns = [...document.querySelectorAll(".restore")];
+
+function showRestore(index) {
+  restoreIndex = index;
+  restoreButtons.forEach((button, position) => {
+    const active = index === position;
+    button.setAttribute("aria-pressed", String(active));
+    restoreRuns[position].hidden = !active;
+  });
+}
+
+restoreButtons.forEach((button, index) => button.addEventListener("click", () => {
+  pause();
+  showRestore(index);
+}));
+
+sections.forEach(({ button }, index) => button.addEventListener("click", () => pick(index)));
+previous.addEventListener("click", () => pick(current - 1));
+next.addEventListener("click", () => pick(current + 1));
+walkthrough.addEventListener("focusin", event => {
+  if (playing && event.target !== play) pause();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && playing) pause();
+});
+play.addEventListener("click", () => {
+  if (playing) {
+    pause();
+    return;
+  }
+  if (completed) {
+    showStep(0);
+    showRestore(0);
+  }
+  completed = false;
+  playing = true;
+  showPlayback();
+  schedule();
+});
+</script>
+</body>
+</html>
