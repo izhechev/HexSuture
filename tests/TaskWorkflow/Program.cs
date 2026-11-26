@@ -56,6 +56,18 @@ try
     reopened.SaveTask(changed);
     var stale = System.Text.Json.JsonSerializer.SerializeToElement(Report());
     Assert(stale.GetProperty("status").GetString() == "open", "Changed task state did not reopen the finding.");
+    var bootState = new BootSnapshot("LAB-PC", DateTimeOffset.UtcNow, scheduler.BootUtc,
+        "x64", true, "enabled", "enabled", "active", "unencrypted", true);
+    Assert(BootReview.Preflight(bootState, false).Length == 0, "Supported x64 client was rejected.");
+    Assert(BootReview.Preflight(bootState with { Architecture = "arm64" }, true).Length == 1, "ARM passed preflight.");
+    Assert(BootReview.Preflight(bootState with { Windows11Client = false }, true).Length == 1, "Server passed preflight.");
+    Assert(BootReview.Preflight(bootState with { WinRe = "disabled", Administrator = false }, true).Length == 2,
+        "Disabled WinRE or non-admin session passed preflight.");
+    Assert(BootReview.Preflight(bootState with { BitLocker = "protected" }, true).Length == 1,
+        "A confirmed key must not override active BitLocker protection.");
+    var suspended = bootState with { BitLocker = "suspended" };
+    Assert(BootReview.Preflight(suspended, false).Length == 1 && BootReview.Preflight(suspended, true).Length == 0,
+        "Suspended BitLocker did not require the separate key confirmation.");
     Console.WriteLine("Task workflow passed with simulated reboots, interruption, rollback, and removal.");
 }
 finally

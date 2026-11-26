@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic event. This fixture describes evidence and contains no malware. -->
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-Windows Defender"/>
+    <EventID>2030</EventID>
+    <TimeCreated SystemTime="2026-11-20T09:15:00Z"/>
+    <EventRecordID>62</EventRecordID>
+    <Channel>Microsoft-Windows-Windows Defender/Operational</Channel>
+    <Computer>BOOT-LAB</Computer>
+  </System>
+  <EventData>
+
+  </EventData>
+</Event>

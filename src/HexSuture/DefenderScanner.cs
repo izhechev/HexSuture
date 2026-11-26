@@ -206,7 +206,7 @@ internal static class DefenderScanner
         if (folder is not null)
         {
             var matchingIds = new HashSet<Guid>();
-            DefenderEvents.CollectWindow(requested.AddMinutes(-10), requested, detectionsOnly: true, item =>
+            DefenderEvents.CollectWindow(requested.AddMinutes(-10), requested, DefenderEventScope.Threats, item =>
             {
                 var facts = JsonSerializer.Deserialize<Dictionary<string, string>>(item.FactsJson)!;
                 facts.TryGetValue("Detection ID", out var id);
@@ -219,7 +219,7 @@ internal static class DefenderScanner
             }, Flag);
         }
 
-        DefenderEvents.CollectWindow(requested, DateTime.UtcNow, detectionsOnly: false, item =>
+        DefenderEvents.CollectWindow(requested, DateTime.UtcNow, DefenderEventScope.Scan, item =>
         {
             store.AddLive(item);
             sawTerminal |= item.EventId is 1001 or 1002;

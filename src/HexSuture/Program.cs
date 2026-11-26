@@ -21,6 +21,10 @@ const string usage = """
       HexSuture scan <case.db> quick
       HexSuture scan <case.db> full
       HexSuture history
+      HexSuture boot collect <case.db> [--baseline | --minutes <1-1440>]
+      HexSuture boot import-state <case.db> <snapshot.json> [--baseline]
+      HexSuture boot request <case.db> --approve-restart [--recovery-key-ready]
+      HexSuture boot result <case.db> <schedule-id> <outcome> --note <text>
       HexSuture ransomware collect <case.db> [--minutes <1-1440>]
       HexSuture recover <case.db> <backup-dir> <manifest.json> <new-destination>
       HexSuture fileless collect <case.db> [--minutes <1-1440>]
@@ -62,6 +66,31 @@ try
             using (var store = new CaseStore(database, create: false))
                 WriteReport(store, export, details, checkFile);
             return 0;
+        case ["boot", "collect", _]:
+        case ["boot", "collect", _, "--baseline"]:
+        case ["boot", "collect", _, "--minutes", _]:
+            if (!OperatingSystem.IsWindows())
+                throw new ArgumentException("Live boot collection requires Windows.");
+            int bootMinutes = ParseCollectionMinutes(args, defaultMinutes: 1440);
+            using (var store = new CaseStore(args[2], create: true))
+                return WindowsBoot.Collect(store, bootMinutes, baseline: args.Length == 4);
+        case ["boot", "import-state", _, _]:
+        case ["boot", "import-state", _, _, "--baseline"]:
+            using (var store = new CaseStore(args[2], create: true))
+                BootReview.ImportState(store, args[3], baseline: args.Length == 5);
+            Console.WriteLine("Saved replayed boot snapshot.");
+            return 0;
+        case ["boot", "request", _, "--approve-restart"]:
+        case ["boot", "request", _, "--approve-restart", "--recovery-key-ready"]:
+            if (!OperatingSystem.IsWindows())
+                throw new ArgumentException("Defender Offline requires Windows 11 x64 client.");
+            using (var store = new CaseStore(args[2], create: true))
+                return WindowsBoot.Request(store, recoveryKeyReady: args.Length == 5);
+        case ["boot", "result", var database, var scheduleId, var outcome, "--note", var note]:
+            using (var store = new CaseStore(database, create: true, allowCreate: false))
+                BootReview.AttachResult(store, scheduleId, outcome, note);
+            Console.WriteLine("Saved the operator-supplied offline result.");
+            return 0;
         case ["recover", var database, var backup, var manifest, var destination]:
             var recovery = BackupRecovery.Run(database, backup, manifest, destination);
             PrintJson(BackupRecovery.Report(recovery, includePaths: true));
@@ -70,10 +99,7 @@ try
         case ["fileless" or "ransomware", "collect", _, "--minutes", _]:
             if (!OperatingSystem.IsWindows())
                 throw new ArgumentException("Live Defender event collection requires Windows.");
-            int minutes = 60;
-            if (args.Length == 5 && (!int.TryParse(args[4], NumberStyles.None, CultureInfo.InvariantCulture,
-                out minutes) || minutes is < 1 or > 1440))
-                throw new ArgumentException("Choose a collection window from 1 to 1440 minutes.");
+            int minutes = ParseCollectionMinutes(args, defaultMinutes: 60);
             using (var store = new CaseStore(args[2], create: true))
                 return args[0] == "ransomware" ? DefenderEvents.CaptureRansomwareEvents(store, minutes) :
                     DefenderEvents.CaptureThreatEvents(store, minutes);
@@ -124,6 +150,16 @@ catch (Exception ex) when (ex is IOException or InvalidDataException or Unauthor
 {
     Console.Error.WriteLine($"Case error: {ex.Message}");
     return 1;
+}
+
+static int ParseCollectionMinutes(string[] args, int defaultMinutes)
+{
+    if (args.Length != 5)
+        return defaultMinutes;
+    if (!int.TryParse(args[4], NumberStyles.None, CultureInfo.InvariantCulture, out int minutes) ||
+        minutes is < 1 or > 1440)
+        throw new ArgumentException("Choose a collection window from 1 to 1440 minutes.");
+    return minutes;
 }
 
 static void PrintTask(TaskReview review, bool details = false)
@@ -253,6 +289,7 @@ static void WriteReport(CaseStore store, bool export, bool details, string? chec
             store.FilelessFollowUps(), store.Task, includePaths),
         filelessMemoryCoverage = "unknown",
         ransomware = RansomwareEvidence.Report(events, store.CfaSettings(), includePaths),
+        boot = BootReview.Report(events, store, includeNotes: !export || includeEvidence),
         recoveryRuns = store.RestoreRuns().Select(run => BackupRecovery.Report(run, includePaths)),
         reviewQueue = FalsePositiveReview.Queue(ScanEvidence.ReviewFindings(events), reviews, now, checkFile),
         reviews = reviews.Select(review => new

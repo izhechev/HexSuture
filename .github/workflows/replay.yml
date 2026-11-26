@@ -27,6 +27,8 @@ jobs:
         run: python tests/test_migration.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
       - name: Test ransomware event replay and verified recovery
         run: python tests/test_ransomware_recovery.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
+      - name: Replay boot findings and offline scan outcomes
+        run: python tests/test_boot_review.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
       - name: Test task cleanup and interrupted retries
         run: dotnet run --project tests/TaskWorkflow --configuration Release
       - name: Check live Task Scheduler disable and rollback
@@ -97,6 +99,20 @@ jobs:
           if (!$expected -or $report.ransomware.deviceSettings.mode -ne $expected) {
             throw 'HexSuture did not record the live folder-protection setting.'
           }
+      - name: Verify live read-only Secure Boot collection
+        shell: pwsh
+        run: |
+          $case = Join-Path $env:RUNNER_TEMP "boot-review.db"
+          $dll = "src/HexSuture/bin/Release/net10.0/HexSuture.dll"
+          $expected = if (Confirm-SecureBootUEFI) { 'enabled' } else { 'disabled' }
+          dotnet $dll boot collect $case --minutes 10
+          if ($LASTEXITCODE -ne 0) { throw 'Boot collection reported a gap.' }
+          $report = dotnet $dll show $case | ConvertFrom-Json
+          $device = $report.boot.devices | Where-Object mode -eq live | Select-Object -First 1
+          if ($device.state.secureBoot -ne $expected -or $report.boot.firmwareIntegrity -ne 'unverified') {
+            throw 'HexSuture did not report the expected Secure Boot setting.'
+          }
+          Write-Host "Secure Boot observed live as $expected. Defender Offline was not requested."
       - name: Diagnose Defender coverage on the disposable runner
         if: failure()
         shell: pwsh

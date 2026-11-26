@@ -151,6 +151,39 @@ dotnet run --project src/HexSuture -- show case.db --paths
 
 Choose a new destination under an existing private directory. Keep the manifest and case outside the backup and restore directories. HexSuture copies each file to staging, verifies its SHA-256 and publishes the verified copy without overwriting files. The report records matched and requested totals, elapsed time, missing files, hash mismatches, unavailable backups and destination conflicts. A partial run returns a nonzero exit code. The same case, manifest, backup path and destination can be used to retry. A clean hash confirms a match to the manifest you supplied. [NIST recovery guidance](https://csrc.nist.gov/pubs/sp/1800/11/final)
 
+## Review boot integrity and Defender Offline scans
+
+On the affected Windows computer, collect its boot state. Add `--baseline` when the current Secure Boot setting is a known-good reference. Later collections show whether that setting changed. The report also links Defender findings that name a rootkit or bootkit or cite a boot-related detection source. Firmware integrity remains unverified. [Windows boot integrity](https://learn.microsoft.com/en-us/windows/security/operating-system-security/system-security/secure-the-windows-10-boot-process)
+
+```powershell
+dotnet run --project src/HexSuture -- boot collect case.db --baseline
+dotnet run --project src/HexSuture -- boot collect case.db
+dotnet run --project src/HexSuture -- show case.db
+```
+
+The offline scan can restart Windows immediately. Save your work before using `boot request` on a Windows 11 x64 client. The request checks administrator access, active Defender, enabled Windows Recovery Environment and BitLocker protection on the system drive. If BitLocker is active, handle suspension and recovery in Windows. When protection is suspended, add `--recovery-key-ready` only after confirming access to the key. Keep the key outside the case. Unrecognized WinRE output, including localized output this version cannot read, blocks the request. [Microsoft Defender Offline requirements](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-offline)
+
+```powershell
+dotnet run --project src/HexSuture -- boot request case.db --approve-restart
+```
+
+After Windows restarts, run `boot collect` again and find the event 2030 schedule ID under `boot.offlineScans`. Event 2030 reports scheduling, and event 2031 reports a scheduling failure. Use `history` to look for evidence of the result in Windows Security. Record an observed result with `boot result` and the corresponding schedule ID. Choose `completed-no-detections`, `completed-detected` or `failed` based on the evidence. A missing or empty result leaves the outcome unknown. HexSuture labels attached results as operator-supplied. [Defender Offline result locations](https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-offline) · [Defender event definitions](https://learn.microsoft.com/en-us/defender-endpoint/troubleshoot-microsoft-defender-antivirus)
+
+```powershell
+dotnet run --project src/HexSuture -- boot result case.db "<schedule-id>" completed-detected --note "Recorded the Defender Offline finding from Protection History"
+```
+
+Try the boot review with the synthetic fixtures below. After the first import, save the same state as the current snapshot. The final snapshot shows a restart and a Secure Boot change but leaves the scan outcome unknown.
+
+```sh
+dotnet run --project src/HexSuture -- boot import-state review.db samples/boot-baseline.json --baseline
+dotnet run --project src/HexSuture -- boot import-state review.db samples/boot-baseline.json
+dotnet run --project src/HexSuture -- import review.db samples/boot-finding.xml
+dotnet run --project src/HexSuture -- import review.db samples/offline-scheduled.xml
+dotnet run --project src/HexSuture -- boot import-state review.db samples/boot-after-restart.json
+dotnet run --project src/HexSuture -- show review.db
+```
+
 ## Run the acceptance tests
 
 The tests use Python 3 and start a fresh copy of the CLI for each command. They use temporary case files and the synthetic XML sample.
@@ -170,6 +203,7 @@ The portable tests cover stopped and completed scans, old case files, and a repl
 python tests/test_scan_evidence.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
 python tests/test_migration.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
 python tests/test_ransomware_recovery.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
+python tests/test_boot_review.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
 ```
 
 On a disposable Windows PC with Defender active, the live check creates 100 text files, saves their SHA-256 manifest, requests a folder scan and checks the files afterward. Use `--parent` to choose a covered test directory. Add `--eicar` to create and read the harmless EICAR test file in a separate folder. The check prints the detection source, whether detection preceded the request, and the recorded action. It removes the temporary cases and test folders afterward. [Microsoft’s EICAR validation guide](https://learn.microsoft.com/en-us/defender-endpoint/validate-antimalware)

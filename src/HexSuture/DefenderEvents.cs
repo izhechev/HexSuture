@@ -6,6 +6,8 @@ using System.Runtime.Versioning;
 
 namespace HexSuture;
 
+internal enum DefenderEventScope { Threats, Scan, Fileless, Ransomware, Boot, OfflineSchedule }
+
 [SupportedOSPlatform("windows")]
 internal static class DefenderEvents
 {
@@ -17,7 +19,7 @@ internal static class DefenderEvents
         var end = DateTime.UtcNow;
         int imported = 0;
         bool complete = true;
-        CollectWindow(end.AddMinutes(-minutes), end, detectionsOnly: true, item =>
+        CollectWindow(end.AddMinutes(-minutes), end, DefenderEventScope.Fileless, item =>
         {
             if (store.AddLive(item))
                 imported++;
@@ -26,7 +28,7 @@ internal static class DefenderEvents
             store.FlagSource("Defender fileless collection", message);
             Console.Error.WriteLine(message);
             complete = false;
-        }, includeBehavior: true);
+        });
         Console.WriteLine($"Saved {imported} new Defender event(s). Use show to review the fileless findings.");
         return complete ? 0 : 1;
     }
@@ -37,13 +39,13 @@ internal static class DefenderEvents
         string mode = ReadFolderProtectionMode();
         store.SaveCfaCoverage(new CfaCoverage(Environment.MachineName, new DateTimeOffset(end), mode));
         bool complete = true;
-        CollectWindow(end.AddMinutes(-minutes), end, detectionsOnly: true,
+        CollectWindow(end.AddMinutes(-minutes), end, DefenderEventScope.Ransomware,
             item => store.AddLive(item), message =>
             {
                 store.FlagSource("Defender controlled folder access collection", message);
                 Console.Error.WriteLine(message);
                 complete = false;
-            }, includeFolderProtection: true);
+            });
         Console.WriteLine($"Controlled folder access mode: {mode}. Use show to review folder-write evidence.");
         return complete ? 0 : 1;
     }
@@ -80,17 +82,20 @@ internal static class DefenderEvents
     }
 
     [SupportedOSPlatform("windows")]
-    internal static void CollectWindow(DateTime start, DateTime end, bool detectionsOnly,
-        Action<ReplayEvent> observe, Action<string> flag, bool includeBehavior = false,
-        bool includeFolderProtection = false)
+    internal static void CollectWindow(DateTime start, DateTime end, DefenderEventScope scope,
+        Action<ReplayEvent> observe, Action<string> flag)
     {
-        string ids = "EventID=1116 or EventID=1117 or EventID=1118 or EventID=1119";
-        if (includeBehavior)
-            ids += " or EventID=1015";
-        if (includeFolderProtection)
-            ids += " or EventID=1123 or EventID=1124";
-        if (!detectionsOnly)
-            ids += " or EventID=1000 or EventID=1001 or EventID=1002";
+        const string threats = "EventID=1116 or EventID=1117 or EventID=1118 or EventID=1119";
+        const string offline = "EventID=2030 or EventID=2031";
+        string ids = scope switch
+        {
+            DefenderEventScope.Scan => threats + " or EventID=1000 or EventID=1001 or EventID=1002",
+            DefenderEventScope.Fileless => threats + " or EventID=1015",
+            DefenderEventScope.Ransomware => threats + " or EventID=1123 or EventID=1124",
+            DefenderEventScope.Boot => threats + " or " + offline,
+            DefenderEventScope.OfflineSchedule => offline,
+            _ => threats
+        };
         string from = start.ToString("O", CultureInfo.InvariantCulture);
         string to = end.ToString("O", CultureInfo.InvariantCulture);
         string filter = $"*[System[Provider[@Name='Microsoft-Windows-Windows Defender'] and " +

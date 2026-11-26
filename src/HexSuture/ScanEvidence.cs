@@ -156,6 +156,30 @@ internal static class ScanEvidence
         }
     }
 
+    internal static IEnumerable<object> BootFindings(IReadOnlyList<(string Mode, ReplayEvent Item)> events)
+    {
+        foreach (var entry in Read(events.Where(row => row.Item.EventId == 1116)))
+        {
+            string? threat = ThreatName(entry);
+            string source = SourceName(entry);
+            string? category = entry.Field("Category Name") ?? entry.Field("Category");
+            string kind = (category?.ToLowerInvariant(), threat?.Split(':', 2)[0].ToLowerInvariant()) switch
+            {
+                ("rootkit", _) or (_, "rootkit") => "rootkit",
+                ("bootkit", _) or (_, "bootkit") => "bootkit",
+                _ => "boot-related"
+            };
+            if (source is not ("elam" or "local-attestation" or "remote-attestation") && kind == "boot-related")
+                continue;
+            yield return new
+            {
+                entry.Mode, entry.Item.Device, entry.Item.RecordId, entry.Item.OccurredUtc, kind,
+                source, threatName = threat, detectionId = Key(entry, "Detection ID").Id,
+                findingId = ReviewFinding.Identifier(entry.Mode, entry.Item), needsReview = true
+            };
+        }
+    }
+
     private static IEnumerable<Entry> Read(IEnumerable<(string Mode, ReplayEvent Item)> events) =>
         events.OrderBy(row => row.Item.OccurredUtc, StringComparer.Ordinal).ThenBy(row => row.Item.RecordId)
             .Select(row => new Entry(row.Mode, row.Item,
@@ -183,7 +207,8 @@ internal static class ScanEvidence
             "user" or "user initiated" or "on-demand" => "user-initiated",
             "system" or "system initiated" => "system-initiated",
             "real-time" or "real-time protection" or "realtime" => "real-time",
-            "ioav" => "ioav", "nis" => "nis", "ieprotect" => "ieprotect", "elam" => "elam",
+            "ioav" => "ioav", "nis" => "nis", "ieprotect" => "ieprotect",
+            "elam" or "early launch antimalware" or "early launch anti-malware" => "elam",
             "local attestation" => "local-attestation", "remote attestation" => "remote-attestation",
             "amsi" or "antimalware scan interface" => "amsi", _ => null
         };

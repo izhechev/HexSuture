@@ -1,0 +1,12 @@
+{
+  "device": "BOOT-LAB",
+  "capturedUtc": "2026-11-20T09:40:00Z",
+  "bootUtc": "2026-11-20T09:30:00Z",
+  "architecture": "x64",
+  "windows11Client": true,
+  "secureBoot": "disabled",
+  "winRe": "enabled",
+  "defender": "active",
+  "bitLocker": "unencrypted",
+  "administrator": true
+}
