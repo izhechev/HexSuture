@@ -34,12 +34,28 @@ internal static class DefenderScanner
         string? signatures = null;
         string? error = null;
         int? exit = null;
+        string? scanner = null;
         try
         {
             using var user = WindowsIdentity.GetCurrent();
             if (!new WindowsPrincipal(user).IsInRole(WindowsBuiltInRole.Administrator))
                 throw new InvalidOperationException("Run the scan from a Windows terminal opened as administrator.");
             (engine, signatures) = ReadStatus();
+            scanner = FindScanner();
+            if (folder is not null)
+            {
+                int check = RunTool(scanner, "-CheckExclusion", "-Path", folder);
+                error = check switch
+                {
+                    1 => null,
+                    0 => "Defender excludes this folder. Choose a folder covered by Defender.",
+                    _ => $"Could not verify Defender coverage for this folder (MpCmdRun exit {check})."
+                };
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            error = "The Defender preflight was interrupted before the scan started.";
         }
         catch (Exception ex) when (IsWindowsSourceError(ex))
         {
@@ -50,28 +66,34 @@ internal static class DefenderScanner
             requested.ToString("O"), engine, signatures, null, null, null));
         Console.WriteLine($"Scan request {id} ({kind}).");
 
-        if (error is null)
-        {
-            try
-            {
-                exit = RunEngine(kind, folder);
-                if (exit != 0)
-                    error = $"MpCmdRun returned {exit}. Check event evidence and Windows Security.";
-            }
-            catch (OperationCanceledException)
-            {
-                error = "Stopped waiting for MpCmdRun. Check Defender for the scan outcome.";
-            }
-            catch (Exception ex) when (IsWindowsSourceError(ex))
-            {
-                error = "Could not run MpCmdRun: " + ex.Message;
-            }
-        }
-        else
+        if (error is not null)
         {
             store.FinishScan(id, DateTime.UtcNow.ToString("O"), null, error);
+            store.FlagSource($"Defender preflight for request {id}", error);
             Console.Error.WriteLine(error);
             return 1;
+        }
+
+        try
+        {
+            string[] arguments = kind switch
+            {
+                "quick" => ["-Scan", "-ScanType", "1"],
+                "full" => ["-Scan", "-ScanType", "2"],
+                "folder" when folder is not null => ["-Scan", "-ScanType", "3", "-File", folder],
+                _ => throw new ArgumentException("Unknown scan scope or missing folder.")
+            };
+            exit = RunTool(scanner!, arguments);
+            if (exit != 0)
+                error = $"MpCmdRun returned {exit}. Check event evidence and Windows Security.";
+        }
+        catch (OperationCanceledException)
+        {
+            error = "Stopped waiting for MpCmdRun. Check Defender for the scan outcome.";
+        }
+        catch (Exception ex) when (IsWindowsSourceError(ex))
+        {
+            error = "Could not run MpCmdRun: " + ex.Message;
         }
 
         var ended = DateTime.UtcNow;
@@ -137,29 +159,18 @@ internal static class DefenderScanner
         return inbox;
     }
 
-    private static int RunEngine(string kind, string? folder)
+    private static int RunTool(string scanner, params string[] arguments)
     {
-        string scanner = FindScanner();
         var start = new ProcessStartInfo(scanner)
         {
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
             WorkingDirectory = Path.GetDirectoryName(scanner)!
         };
-        start.ArgumentList.Add("-Scan");
-        start.ArgumentList.Add("-ScanType");
-        start.ArgumentList.Add(kind switch
-        {
-            "quick" => "1",
-            "full" => "2",
-            "folder" => "3",
-            _ => throw new ArgumentException("Unknown scan scope.")
-        });
-        if (kind == "folder")
-        {
-            start.ArgumentList.Add("-File");
-            start.ArgumentList.Add(folder ?? throw new ArgumentException("A folder scan needs a directory."));
-        }
+        foreach (string argument in arguments)
+            start.ArgumentList.Add(argument);
 
         using var interrupted = new CancellationTokenSource();
         ConsoleCancelEventHandler stopWaiting = (_, args) =>
@@ -171,6 +182,9 @@ internal static class DefenderScanner
         try
         {
             using var process = Process.Start(start) ?? throw new InvalidOperationException("MpCmdRun did not start.");
+            // Native output can contain the private target path.
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
             process.WaitForExitAsync(interrupted.Token).GetAwaiter().GetResult();
             return process.ExitCode;
         }

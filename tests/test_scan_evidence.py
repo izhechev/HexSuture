@@ -1,6 +1,7 @@
 """Exercise scan and detection reports with synthetic Windows event XML."""
 
 import argparse
+from contextlib import closing
 import json
 import os
 from pathlib import Path
@@ -97,8 +98,9 @@ class ScanEvidenceTests(unittest.TestCase):
         self.event(1116, 1, {"Detection ID": DETECTION})
         self.event(1117, 2, {"Detection ID": DETECTION, "Action ID": "2"})
         # Simulate the provenance assigned by the live collector without scanning the host.
-        with sqlite3.connect(self.case) as connection:
+        with closing(sqlite3.connect(self.case)) as connection:
             connection.execute("UPDATE observations SET origin = 'live' WHERE event_id = 1117")
+            connection.commit()
         evidence = {row["mode"]: row for row in json.loads(self.cli("show"))["detections"]}
         self.assertIsNone(evidence["replay"]["action"])
         self.assertIsNone(evidence["live"]["detectedUtc"])

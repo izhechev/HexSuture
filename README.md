@@ -13,7 +13,7 @@ dotnet run --project src/HexSuture -- scan case.db full
 dotnet run --project src/HexSuture -- show case.db
 ```
 
-A folder scan checks the selected directory. Quick and full scans use Defender’s built-in scopes. Defender applies the response configured on the PC. Use `dotnet run --project src/HexSuture -- history` to open Protection History and review quarantined items. [Defender scan options](https://learn.microsoft.com/en-us/defender-endpoint/command-line-arguments-microsoft-defender-antivirus) · [Microsoft Protection History](https://support.microsoft.com/en-us/windows/security/windows-security/protection-history-in-the-windows-security-app)
+Before scanning a folder, HexSuture asks Defender whether that folder is excluded. An excluded or unverifiable folder produces a coverage gap. Quick and full scans use Defender’s built-in scopes. Defender applies the response configured on the PC. Use `dotnet run --project src/HexSuture -- history` to open Protection History and review quarantined items. [Defender scan options](https://learn.microsoft.com/en-us/defender-endpoint/command-line-arguments-microsoft-defender-antivirus) · [Microsoft Protection History](https://support.microsoft.com/en-us/windows/security/windows-security/protection-history-in-the-windows-security-app)
 
 | Report field | What it tells you |
 | --- | --- |
@@ -52,7 +52,7 @@ dotnet build src/HexSuture --configuration Release --warnaserror
 python tests/test_replay.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
 ```
 
-On macOS or Linux, use `python3` if that is the name of your Python executable. GitHub Actions runs the portable tests on Windows x64 and a live check on a disposable Windows 11 Arm runner for pushes to main.
+On macOS or Linux, use `python3` if that is the name of your Python executable. GitHub Actions runs the portable tests on Windows x64. Pushes to main also run the live check on an isolated volume on a disposable Windows 11 Arm runner.
 
 ## Check the scanner on a test PC
 
@@ -63,7 +63,7 @@ python tests/test_scan_evidence.py src/HexSuture/bin/Release/net10.0/HexSuture.d
 python tests/test_migration.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
 ```
 
-On a disposable Windows PC with Defender active, the live check creates 100 text files, saves their SHA-256 manifest, requests a folder scan and checks the files afterward. Add `--eicar` to create the harmless EICAR test file in a separate folder. The check prints the detection source, whether detection preceded the request, and the recorded action. It removes the temporary cases and test folders afterward. [Microsoft’s EICAR validation guide](https://learn.microsoft.com/en-us/defender-endpoint/validate-antimalware)
+On a disposable Windows PC with Defender active, the live check creates 100 text files, saves their SHA-256 manifest, requests a folder scan and checks the files afterward. Use `--parent` to choose a covered test directory. Add `--eicar` to create and read the harmless EICAR test file in a separate folder. The check prints the detection source, whether detection preceded the request, and the recorded action. It removes the temporary cases and test folders afterward. [Microsoft’s EICAR validation guide](https://learn.microsoft.com/en-us/defender-endpoint/validate-antimalware)
 
 ```powershell
 python tests/live_scan.py src/HexSuture/bin/Release/net10.0/HexSuture.dll --eicar

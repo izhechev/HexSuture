@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import os
+from collections import Counter
 import subprocess
 import tempfile
 import time
@@ -71,22 +72,29 @@ def test_benign(dll, root):
 def test_eicar(dll, root):
     folder = root / "EICAR check"
     folder.mkdir()
-    sample = folder / "eicar-test.txt"
+    sample = folder / "EICAR.txt"
     # EICAR's harmless 68-byte signature is written only in the disposable test folder.
     data = br"X5O!P%@AP[4\PZX54(P^)7CC)7}$" + b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
     try:
         sample.write_bytes(data)
+        # Read the file as described in Microsoft's Windows EICAR validation procedure.
+        sample.read_bytes()
     except OSError as error:
-        if getattr(error, "winerror", None) not in (5, 225, 226):
+        if not isinstance(error, FileNotFoundError) and getattr(error, "winerror", None) not in (5, 225, 226):
             raise
-    # Give on-access protection time to record a detection before requesting the scan.
-    time.sleep(5)
+    # On-access detections and remediation events can arrive after the file disappears.
+    time.sleep(12)
     code, report = run_folder_scan(dll, root / "eicar.db", folder)
     request = checked_request(report, folder)
     matches = [item for item in report["detections"] if item["mode"] == "live"
                and "eicar" in (item["threatName"] or "").lower()
                and os.path.normcase(str(sample)) in set(resources(item)) and item["detectedUtc"]]
     if not matches:
+        ids = Counter(row["eventId"] for row in report["observations"])
+        print(f"Live event counts: {dict(ids)}; test file still present: {sample.exists()}.", flush=True)
+        for item in report["detections"]:
+            same_name = any(os.path.basename(path) == sample.name.lower() for path in resources(item))
+            print(f"Recorded threat={item['threatName']}, source={item['source']}, matching basename={same_name}.", flush=True)
         raise ValueError(f"No live EICAR detection identified this sample. Scanner exit {code}; coverage gaps: {report['sourceGaps']}")
     first = min(matches, key=lambda item: item["detectedUtc"])
     before = datetime.fromisoformat(first["detectedUtc"].replace("Z", "+00:00")) < datetime.fromisoformat(request["requestedUtc"].replace("Z", "+00:00"))
@@ -99,10 +107,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dll", type=Path)
     parser.add_argument("--eicar", action="store_true", help="Also create the harmless EICAR test file.")
+    parser.add_argument("--parent", type=Path, default=Path.home() / "Documents",
+                        help="Existing local directory covered by Defender.")
     args = parser.parse_args()
     if os.name != "nt" or not args.dll.is_file():
         parser.error("Run on Windows with a built HexSuture DLL.")
-    with tempfile.TemporaryDirectory(prefix="hexsuture-scan-") as tmp:
+    if not args.parent.is_dir():
+        parser.error("Choose an existing directory with --parent.")
+    with tempfile.TemporaryDirectory(prefix="hexsuture-scan-", dir=args.parent.resolve()) as tmp:
         base = Path(tmp).resolve()
         dll_path = args.dll.resolve()
         test_benign(dll_path, base)

@@ -41,5 +41,36 @@ jobs:
           dotnet-version: 10.0.x
       - name: Build HexSuture
         run: dotnet build src/HexSuture --configuration Release --warnaserror
+      - name: Prepare an isolated Defender test volume
+        shell: pwsh
+        run: |
+          $image = Join-Path $env:RUNNER_TEMP ("hexsuture-" + [guid]::NewGuid() + ".vhd")
+          $script = Join-Path $env:RUNNER_TEMP ("create-" + [guid]::NewGuid() + ".txt")
+          "create vdisk file=`"$image`" maximum=128 type=expandable" | Set-Content -LiteralPath $script -Encoding ascii
+          diskpart /s $script
+          if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $image)) { throw "Test image creation failed." }
+          $disk = Mount-DiskImage -ImagePath $image -PassThru | Get-Disk
+          if (@($disk).Count -ne 1 -or $disk.IsBoot -or $disk.IsSystem -or $disk.PartitionStyle -ne 'RAW' -or ($disk.Size -lt 120MB -or $disk.Size -gt 129MB)) {
+            throw "The mounted test image is not a new, empty 128 MB disk."
+          }
+          $partition = $disk | Initialize-Disk -PartitionStyle MBR -PassThru | New-Partition -UseMaximumSize -AssignDriveLetter
+          $volume = $partition | Format-Volume -FileSystem NTFS -NewFileSystemLabel HexSutureTest -Confirm:$false
+          if (!$volume.DriveLetter) { throw "The test volume has no drive letter." }
+          "$($volume.DriveLetter):\" | Set-Content -LiteralPath "$env:RUNNER_TEMP/hexsuture-drive.txt"
       - name: Scan 100 benign files and check EICAR attribution
-        run: python tests/live_scan.py src/HexSuture/bin/Release/net10.0/HexSuture.dll --eicar
+        shell: pwsh
+        run: |
+          $root = (Get-Content -LiteralPath "$env:RUNNER_TEMP/hexsuture-drive.txt" -Raw).Trim()
+          python tests/live_scan.py src/HexSuture/bin/Release/net10.0/HexSuture.dll --eicar --parent $root
+      - name: Diagnose Defender coverage on the disposable runner
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-MpComputerStatus | Select-Object AMRunningMode, AntivirusEnabled, RealTimeProtectionEnabled, OnAccessProtectionEnabled | Format-List
+          $filter = @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1006,1007,1116,1117,1118,1119; StartTime = (Get-Date).AddMinutes(-10) }
+          Get-WinEvent -FilterHashtable $filter -ErrorAction SilentlyContinue | ForEach-Object {
+            $fields = ([xml]$_.ToXml()).Event.EventData.Data
+            $resource = ($fields | Where-Object Name -eq 'Path').'#text'
+            $threat = ($fields | Where-Object Name -eq 'Threat Name').'#text'
+            [pscustomobject]@{ Event = $_.Id; Eicar = $threat -match 'EICAR'; TestFolder = $resource -match 'hexsuture-scan-'; FileResource = $resource -match 'file:' }
+          } | Format-Table
