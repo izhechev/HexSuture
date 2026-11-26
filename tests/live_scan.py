@@ -80,8 +80,9 @@ def test_eicar(dll, root):
         # Read the file as described in Microsoft's Windows EICAR validation procedure.
         sample.read_bytes()
     except OSError as error:
-        if not isinstance(error, FileNotFoundError) and getattr(error, "winerror", None) not in (5, 225, 226):
-            raise
+        # Windows can refuse the harmless sample during either I/O call. Only a matching
+        # Defender detection below can pass this test, regardless of the native error.
+        print(f"EICAR sample access interrupted (errno={error.errno}, winerror={getattr(error, 'winerror', None)}).", flush=True)
     # On-access detections and remediation events can arrive after the file disappears.
     time.sleep(12)
     code, report = run_folder_scan(dll, root / "eicar.db", folder)
