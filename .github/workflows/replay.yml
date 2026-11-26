@@ -25,6 +25,8 @@ jobs:
         run: python tests/test_scan_evidence.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
       - name: Test existing case databases
         run: python tests/test_migration.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
+      - name: Test ransomware event replay and verified recovery
+        run: python tests/test_ransomware_recovery.py src/HexSuture/bin/Release/net10.0/HexSuture.dll
       - name: Test task cleanup and interrupted retries
         run: dotnet run --project tests/TaskWorkflow --configuration Release
       - name: Check live Task Scheduler disable and rollback
@@ -81,6 +83,19 @@ jobs:
           $live = $report.detections | Where-Object { $_.mode -eq 'live' -and $_.threatName -match 'EICAR' }
           if (!$live -or $report.filelessMemoryCoverage -ne 'unknown') {
             throw 'The independent collector did not show the live EICAR event or its coverage limit.'
+          }
+      - name: Verify live folder protection coverage reporting
+        shell: pwsh
+        run: |
+          $case = Join-Path $env:RUNNER_TEMP 'folder-protection.db'
+          $dll = 'src/HexSuture/bin/Release/net10.0/HexSuture.dll'
+          $mode = [int](Get-MpPreference).EnableControlledFolderAccess
+          $expected = @('off','block','audit','disk-only-block','disk-only-audit')[$mode]
+          dotnet $dll ransomware collect $case --minutes 10
+          if ($LASTEXITCODE -ne 0) { throw 'Folder-protection collection failed.' }
+          $report = dotnet $dll show $case | ConvertFrom-Json
+          if (!$expected -or $report.ransomware.deviceSettings.mode -ne $expected) {
+            throw 'HexSuture did not record the live folder-protection setting.'
           }
       - name: Diagnose Defender coverage on the disposable runner
         if: failure()

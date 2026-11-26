@@ -1,5 +1,7 @@
 using System.Diagnostics.Eventing.Reader;
 using System.Globalization;
+using System.Management;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace HexSuture;
@@ -29,13 +31,64 @@ internal static class DefenderEvents
         return complete ? 0 : 1;
     }
 
+    internal static int CaptureRansomwareEvents(CaseStore store, int minutes)
+    {
+        var end = DateTime.UtcNow;
+        string mode = ReadFolderProtectionMode();
+        store.SaveCfaCoverage(new CfaCoverage(Environment.MachineName, new DateTimeOffset(end), mode));
+        bool complete = true;
+        CollectWindow(end.AddMinutes(-minutes), end, detectionsOnly: true,
+            item => store.AddLive(item), message =>
+            {
+                store.FlagSource("Defender controlled folder access collection", message);
+                Console.Error.WriteLine(message);
+                complete = false;
+            }, includeFolderProtection: true);
+        Console.WriteLine($"Controlled folder access mode: {mode}. Use show to review folder-write evidence.");
+        return complete ? 0 : 1;
+    }
+
+    private static string ReadFolderProtectionMode()
+    {
+        try
+        {
+            using var search = new ManagementObjectSearcher(@"root\Microsoft\Windows\Defender",
+                "SELECT EnableControlledFolderAccess FROM MSFT_MpPreference");
+            using var results = search.Get();
+            foreach (ManagementObject result in results)
+            {
+                using (result)
+                {
+                    return Convert.ToString(result["EnableControlledFolderAccess"], CultureInfo.InvariantCulture) switch
+                    {
+                        "0" => "off",
+                        "1" => "block",
+                        "2" => "audit",
+                        "3" => "disk-only-block",
+                        "4" => "disk-only-audit",
+                        _ => "unknown"
+                    };
+                }
+            }
+        }
+        catch (Exception ex) when (ex is ManagementException or COMException
+            or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            // A collection can still provide event evidence when the settings query fails.
+        }
+        return "unknown";
+    }
+
     [SupportedOSPlatform("windows")]
     internal static void CollectWindow(DateTime start, DateTime end, bool detectionsOnly,
-        Action<ReplayEvent> observe, Action<string> flag, bool includeBehavior = false)
+        Action<ReplayEvent> observe, Action<string> flag, bool includeBehavior = false,
+        bool includeFolderProtection = false)
     {
         string ids = "EventID=1116 or EventID=1117 or EventID=1118 or EventID=1119";
         if (includeBehavior)
             ids += " or EventID=1015";
+        if (includeFolderProtection)
+            ids += " or EventID=1123 or EventID=1124";
         if (!detectionsOnly)
             ids += " or EventID=1000 or EventID=1001 or EventID=1002";
         string from = start.ToString("O", CultureInfo.InvariantCulture);

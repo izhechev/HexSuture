@@ -21,6 +21,8 @@ const string usage = """
       HexSuture scan <case.db> quick
       HexSuture scan <case.db> full
       HexSuture history
+      HexSuture ransomware collect <case.db> [--minutes <1-1440>]
+      HexSuture recover <case.db> <backup-dir> <manifest.json> <new-destination>
       HexSuture fileless collect <case.db> [--minutes <1-1440>]
       HexSuture fileless check-task <case.db> <finding-id> <task-review-id>
       HexSuture startup import <case.db> <baseline|current> <csv> --device <name> --scope <scope>
@@ -60,8 +62,12 @@ try
             using (var store = new CaseStore(database, create: false))
                 WriteReport(store, export, details, checkFile);
             return 0;
-        case ["fileless", "collect", _]:
-        case ["fileless", "collect", _, "--minutes", _]:
+        case ["recover", var database, var backup, var manifest, var destination]:
+            var recovery = BackupRecovery.Run(database, backup, manifest, destination);
+            PrintJson(BackupRecovery.Report(recovery, includePaths: true));
+            return recovery.Matched == recovery.Requested ? 0 : 1;
+        case ["fileless" or "ransomware", "collect", _]:
+        case ["fileless" or "ransomware", "collect", _, "--minutes", _]:
             if (!OperatingSystem.IsWindows())
                 throw new ArgumentException("Live Defender event collection requires Windows.");
             int minutes = 60;
@@ -69,7 +75,8 @@ try
                 out minutes) || minutes is < 1 or > 1440))
                 throw new ArgumentException("Choose a collection window from 1 to 1440 minutes.");
             using (var store = new CaseStore(args[2], create: true))
-                return DefenderEvents.CaptureThreatEvents(store, minutes);
+                return args[0] == "ransomware" ? DefenderEvents.CaptureRansomwareEvents(store, minutes) :
+                    DefenderEvents.CaptureThreatEvents(store, minutes);
         case ["fileless", "check-task", var database, var findingId, var taskId]:
             if (!OperatingSystem.IsWindows())
                 throw new ArgumentException("Checking a live related task requires Windows.");
@@ -245,6 +252,8 @@ static void WriteReport(CaseStore store, bool export, bool details, string? chec
         fileless = FilelessReview.Report(ScanEvidence.FilelessFindings(events),
             store.FilelessFollowUps(), store.Task, includePaths),
         filelessMemoryCoverage = "unknown",
+        ransomware = RansomwareEvidence.Report(events, store.CfaSettings(), includePaths),
+        recoveryRuns = store.RestoreRuns().Select(run => BackupRecovery.Report(run, includePaths)),
         reviewQueue = FalsePositiveReview.Queue(ScanEvidence.ReviewFindings(events), reviews, now, checkFile),
         reviews = reviews.Select(review => new
         {
