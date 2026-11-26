@@ -75,7 +75,7 @@ class MigrationTests(unittest.TestCase):
                 job.result()
 
         with closing(sqlite3.connect(self.case)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
             self.assertEqual(db.execute("SELECT count(*) FROM observations").fetchone()[0], 2)
             # Seed a synthetic live record so this compatibility test works without Defender.
             db.execute("UPDATE observations SET origin = 'live' WHERE record_id = 42")
@@ -87,6 +87,28 @@ class MigrationTests(unittest.TestCase):
         identities = sorted((event["recordId"], event["mode"]) for event in report["observations"])
         self.assertEqual(identities, [(7, "replay"), (42, "live"), (42, "replay")])
         self.assertEqual(report["sourceGaps"], [{"sourceName": "old.xml", "reason": "Source is missing."}])
+
+
+    def test_v2_scan_requests_survive_review_upgrade(self):
+        self.cli("import", self.case, SAMPLE)
+        with closing(sqlite3.connect(self.case)) as db:
+            db.executescript("""
+                DROP TABLE reviews;
+                PRAGMA user_version = 2;
+                INSERT INTO scan_requests (id, device, kind, requested_utc)
+                VALUES ('sample-request', 'LAB-PC', 'quick', '2026-11-20T12:00:00Z');
+            """)
+        original = self.case.read_bytes()
+        report = json.loads(self.cli("show", self.case))
+        self.assertEqual(self.case.read_bytes(), original)
+        self.assertEqual(report["scanRequests"][0]["requestId"], "sample-request")
+        self.assertEqual(report["reviews"], [])
+        self.cli("import", self.case, SAMPLE)
+        updated = json.loads(self.cli("show", self.case))
+        self.assertEqual(updated["scanRequests"], report["scanRequests"])
+        self.assertEqual(updated["observations"], report["observations"])
+        with closing(sqlite3.connect(self.case)) as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
 
 
 if __name__ == "__main__":

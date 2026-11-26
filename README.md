@@ -43,6 +43,23 @@ Each database represents one case. Event identity uses the source device, channe
 
 Use a private folder for real cases. The database holds the original named event fields, which can include usernames, paths or script text. The default report shows the device, event identity and selected facts. The optional paths view includes recorded resource paths. On Windows, new case files inherit the folder’s access permissions.
 
+## Review a possible false positive
+
+Use the `findingId` shown in `detections` or `reviewQueue` to record a decision. The sample below deliberately pairs a synthetic detection with ordinary text. Replace `<finding-id>` with the ID from the report and use a future UTC expiry.
+
+```sh
+dotnet run --project src/HexSuture -- import review.db samples/benign-detection.xml
+dotnet run --project src/HexSuture -- show review.db
+dotnet run --project src/HexSuture -- review review.db "<finding-id>" benign --reviewer lab --reason "Known test document" --until 2027-01-01T12:00:00Z --file samples/benign-note.txt
+dotnet run --project src/HexSuture -- show review.db --check-file samples/benign-note.txt
+```
+
+Each decision adds a history entry with the reviewer, reason, rule version and time. Use `malicious` or `uncertain` for other outcomes. An uncertain decision keeps the finding open. A decision without a file applies only to that occurrence. A new occurrence always gets its own review.
+
+A file-bound benign decision applies while its expiry is in the future and the selected file still matches the recorded SHA-256. Use `--check-file` to verify that file when viewing the queue. A replacement, unavailable file or expired decision returns the finding to the queue. A live finding can be bound to its single recorded file on the originating PC. For replay, the reviewer supplies the copy to check. The review changes HexSuture’s case only. Defender continues applying its own policy. [Microsoft’s false-positive workflow](https://learn.microsoft.com/en-us/defender-endpoint/defender-endpoint-false-positives-negatives)
+
+`export review.db` writes a redacted JSON case to standard output. It keeps detection IDs, decision history and links to the underlying event records. Use `export review.db --include-evidence` for a private copy with the stored event facts, resource paths and review notes. Cases from milestones 1 and 2 remain readable and upgrade on the next write.
+
 ## Run the acceptance tests
 
 The tests use Python 3 and start a fresh copy of the CLI for each command. They use temporary case files and the synthetic XML sample.

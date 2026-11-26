@@ -2,12 +2,15 @@
 
 import argparse
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -139,6 +142,76 @@ class ScanEvidenceTests(unittest.TestCase):
         self.assertIsNone(detection["threatName"])
         self.assertEqual(detection["source"], "unknown")
         self.assertEqual(detection["actionStatus"], "unknown")
+
+
+    def test_review_hash_detects_replacement_and_preserves_export_evidence(self):
+        file = (self.root.resolve() / "private-benign.txt")
+        original = b"ordinary document"
+        file.write_bytes(original)
+        fields = {"Detection ID": DETECTION, "Threat Name": "Test:Win32/BenignFixture",
+                  "Path": f"file:_{file}", "Private Field": "original source evidence"}
+        self.event(1116, 1, fields)
+        report = json.loads(self.cli("show"))
+        finding_id = report["detections"][0]["findingId"]
+        self.assertEqual(report["reviewQueue"][0]["status"], "open")
+
+        until = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.cli("review", finding_id, "benign", "--file", file, "--until", until,
+                 "--reviewer", "lab-reviewer", "--reason", "known benign text")
+        pending = json.loads(self.cli("show"))["reviewQueue"][0]
+        self.assertEqual(pending["status"], "verification-required")
+        checked = json.loads(self.cli("show", "--check-file", file))
+        self.assertEqual(checked["reviewQueue"][0]["status"], "reviewed")
+        self.assertEqual(checked["reviews"][0]["artifactSha256"], hashlib.sha256(original).hexdigest())
+        self.assertEqual(checked["reviews"][0]["reviewer"], "lab-reviewer")
+        self.assertEqual(checked["reviews"][0]["reason"], "known benign text")
+
+        file.write_bytes(b"replacement text")
+        changed = json.loads(self.cli("show", "--check-file", file))["reviewQueue"][0]
+        self.assertEqual(changed["status"], "file-changed")
+        self.assertTrue(changed["needsReview"])
+        file.unlink()
+        absent = json.loads(self.cli("show", "--check-file", file))["reviewQueue"][0]
+        self.assertEqual(absent["status"], "file-unavailable")
+
+        redacted = self.cli("export")
+        self.assertNotIn("private-benign.txt", redacted)
+        self.assertNotIn("lab-reviewer", redacted)
+        self.assertNotIn("original source evidence", redacted)
+        evidence = json.loads(self.cli("export", "--include-evidence"))
+        self.assertEqual(evidence["observations"][0]["facts"], fields)
+        self.assertEqual(evidence["reviews"][0]["findingId"], finding_id)
+        self.assertEqual(evidence["reviewQueue"][0]["recordId"], 1)
+
+    def test_expiry_reopens_review_and_new_occurrence_stays_open(self):
+        self.event(1116, 1, {"Detection ID": DETECTION})
+        finding_id = json.loads(self.cli("show"))["reviewQueue"][0]["findingId"]
+        deadline = datetime.now(timezone.utc) + timedelta(seconds=5)
+        self.cli("review", finding_id, "benign", "--until", deadline.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                 "--reviewer", "test", "--reason", "Known fixture")
+        self.assertEqual(json.loads(self.cli("show"))["reviewQueue"][0]["status"], "reviewed")
+        self.event(1116, 2, {"Detection ID": OTHER_DETECTION})
+        time.sleep(max(0, (deadline - datetime.now(timezone.utc)).total_seconds()))
+        queue = json.loads(self.cli("show"))["reviewQueue"]
+        self.assertEqual([row["status"] for row in queue], ["expired", "open"])
+
+    def test_occurrence_decisions_and_invalid_requests(self):
+        self.event(1116, 1, {})
+        self.event(1117, 2, {"Detection ID": OTHER_DETECTION})
+        queue = json.loads(self.cli("show"))["reviewQueue"]
+        self.assertEqual(len(queue), 1)
+        finding_id = queue[0]["findingId"]
+        for decision in ("malicious", "uncertain"):
+            self.cli("review", finding_id, decision, "--reviewer", "test", "--reason", "Manual review")
+        report = json.loads(self.cli("show"))
+        self.assertEqual(report["reviewQueue"][0]["status"], "uncertain")
+        self.assertEqual([row["decision"] for row in report["reviews"]], ["malicious", "uncertain"])
+        for extras in (["--file", "test.txt"], ["--until", "2020-01-01T00:00:00Z"]):
+            result = subprocess.run(["dotnet", str(self.dll), "review", str(self.case), finding_id,
+                                     "benign", "--reviewer", "test", "--reason", "test", *extras],
+                                    capture_output=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len(json.loads(self.cli("show"))["reviews"]), 2)
 
 
 if __name__ == "__main__":

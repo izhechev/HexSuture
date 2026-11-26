@@ -5,7 +5,7 @@ namespace HexSuture;
 internal sealed class CaseStore : IDisposable
 {
     private const int ApplicationId = 0x48585355;
-    private const int SchemaVersion = 2;
+    private const int SchemaVersion = 3;
     private const string CreateObservations = """
         CREATE TABLE observations_v2 (
             device TEXT NOT NULL COLLATE NOCASE,
@@ -34,13 +34,28 @@ internal sealed class CaseStore : IDisposable
             CHECK ((kind = 'folder') = (folder IS NOT NULL))
         );
         """;
+    private const string CreateReviews = """
+        CREATE TABLE reviews (
+            id INTEGER PRIMARY KEY,
+            finding_id TEXT NOT NULL,
+            rule_version TEXT NOT NULL,
+            decision TEXT NOT NULL CHECK (decision IN ('benign', 'malicious', 'uncertain')),
+            reviewer TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            reviewed_utc TEXT NOT NULL,
+            expires_utc TEXT,
+            artifact_sha256 TEXT,
+            artifact_path TEXT,
+            CHECK ((artifact_sha256 IS NULL) = (artifact_path IS NULL))
+        );
+        """;
     private readonly long version;
     private readonly SqliteConnection connection;
 
-    public CaseStore(string databasePath, bool create)
+    public CaseStore(string databasePath, bool create, bool allowCreate = true)
     {
         var path = Path.GetFullPath(databasePath);
-        if (create && !File.Exists(path))
+        if (create && allowCreate && !File.Exists(path))
         {
             CreateCase(path);
         }
@@ -60,7 +75,7 @@ internal sealed class CaseStore : IDisposable
 
             command.CommandText = "PRAGMA user_version";
             version = (long)command.ExecuteScalar()!;
-            if (version != 1 && version != SchemaVersion)
+            if (version is < 1 or > SchemaVersion)
             {
                 throw new InvalidDataException("Unsupported HexSuture case version.");
             }
@@ -76,6 +91,13 @@ internal sealed class CaseStore : IDisposable
                     DROP TABLE observations;
                     ALTER TABLE observations_v2 RENAME TO observations;
                     {CreateScanRequests}
+                    """;
+                command.ExecuteNonQuery();
+            }
+            if (version < SchemaVersion && create)
+            {
+                command.CommandText = $"""
+                    {CreateReviews}
                     PRAGMA user_version = {SchemaVersion};
                     """;
                 command.ExecuteNonQuery();
@@ -123,6 +145,7 @@ internal sealed class CaseStore : IDisposable
                     {CreateObservations}
                     ALTER TABLE observations_v2 RENAME TO observations;
                     {CreateScanRequests}
+                    {CreateReviews}
                     CREATE TABLE source_gaps (
                         source_name TEXT NOT NULL,
                         reason TEXT NOT NULL,
@@ -285,6 +308,48 @@ internal sealed class CaseStore : IDisposable
 
     private static string? OptionalText(SqliteDataReader rows, int ordinal) =>
         rows.IsDBNull(ordinal) ? null : rows.GetString(ordinal);
+
+    public void AddReview(FindingReview review)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO reviews
+                (finding_id, rule_version, decision, reviewer, reason, reviewed_utc,
+                 expires_utc, artifact_sha256, artifact_path)
+            VALUES ($finding, $rule, $decision, $reviewer, $reason, $reviewed, $expires, $hash, $path);
+            """;
+        command.Parameters.AddWithValue("$finding", review.FindingId);
+        command.Parameters.AddWithValue("$rule", review.RuleVersion);
+        command.Parameters.AddWithValue("$decision", review.Decision);
+        command.Parameters.AddWithValue("$reviewer", review.Reviewer);
+        command.Parameters.AddWithValue("$reason", review.Reason);
+        command.Parameters.AddWithValue("$reviewed", review.ReviewedUtc.ToString("O"));
+        command.Parameters.AddWithValue("$expires", (object?)review.ExpiresUtc?.ToString("O") ?? DBNull.Value);
+        command.Parameters.AddWithValue("$hash", (object?)review.ArtifactSha256 ?? DBNull.Value);
+        command.Parameters.AddWithValue("$path", (object?)review.ArtifactPath ?? DBNull.Value);
+        command.ExecuteNonQuery();
+    }
+
+    public IEnumerable<FindingReview> Reviews()
+    {
+        if (version < 3)
+            yield break;
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT finding_id, rule_version, decision, reviewer, reason, reviewed_utc,
+                   expires_utc, artifact_sha256, artifact_path
+            FROM reviews ORDER BY id;
+            """;
+        using var rows = command.ExecuteReader();
+        while (rows.Read())
+        {
+            yield return new FindingReview(rows.GetString(0), rows.GetString(1), rows.GetString(2),
+                rows.GetString(3), rows.GetString(4), rows.GetDateTimeOffset(5),
+                rows.IsDBNull(6) ? null : rows.GetDateTimeOffset(6),
+                OptionalText(rows, 7), OptionalText(rows, 8));
+        }
+    }
 
     public void Dispose() => connection.Dispose();
 }

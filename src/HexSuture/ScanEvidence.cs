@@ -46,10 +46,24 @@ internal static class ScanEvidence
         }
     }
 
+    private static IEnumerable<IGrouping<(string Mode, string Device, string? Id, long Record, string? Time), Entry>>
+        DetectionGroups(IReadOnlyList<(string Mode, ReplayEvent Item)> events) =>
+        Read(events.Where(row => row.Item.EventId is >= 1116 and <= 1119))
+            .GroupBy(entry => Key(entry, "Detection ID"));
+
+    public static IEnumerable<ReviewFinding> ReviewFindings(IReadOnlyList<(string Mode, ReplayEvent Item)> events)
+    {
+        foreach (var group in DetectionGroups(events))
+        {
+            var detection = group.FirstOrDefault(entry => entry.Item.EventId == 1116);
+            if (detection is not null)
+                yield return new ReviewFinding(detection.Mode, detection.Item, group.Key.Id, detection.Field("Path"));
+        }
+    }
+
     public static IEnumerable<object> Detections(IReadOnlyList<(string Mode, ReplayEvent Item)> events, bool includePaths = false)
     {
-        var entries = Read(events.Where(row => row.Item.EventId is >= 1116 and <= 1119));
-        foreach (var group in entries.GroupBy(entry => Key(entry, "Detection ID")))
+        foreach (var group in DetectionGroups(events))
         {
             var first = group.First();
             var detection = group.FirstOrDefault(e => e.Item.EventId == 1116);
@@ -67,6 +81,7 @@ internal static class ScanEvidence
             yield return new
             {
                 mode = first.Mode, device = first.Item.Device, detectionId = group.Key.Id,
+                findingId = detection is null ? null : ReviewFinding.Identifier(detection.Mode, detection.Item),
                 detectedUtc = detection?.Item.OccurredUtc, source = SourceName(identity),
                 threatId = ulong.TryParse(identity.Field("Threat ID"), NumberStyles.None,
                     CultureInfo.InvariantCulture, out var threat) ? threat.ToString(CultureInfo.InvariantCulture) : null,

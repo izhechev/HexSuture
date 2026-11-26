@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Synthetic finding. The associated text file is benign. -->
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-Windows Defender"/>
+    <EventID>1116</EventID>
+    <TimeCreated SystemTime="2026-11-20T09:12:00Z"/>
+    <EventRecordID>43</EventRecordID>
+    <Channel>Microsoft-Windows-Windows Defender/Operational</Channel>
+    <Computer>LAB-PC</Computer>
+  </System>
+  <EventData>
+    <Data Name="Detection ID">{70000000-0000-4000-8000-000000000043}</Data>
+    <Data Name="Threat Name">Test:Win32/BenignFixture</Data>
+    <Data Name="Source ID">1</Data>
+    <Data Name="Path">file:_C:\HexSutureLab\benign-note.txt</Data>
+  </EventData>
+</Event>

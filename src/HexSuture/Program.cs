@@ -9,7 +9,10 @@ const string usage = """
     Run a Defender scan, review a case, or replay a saved Defender event.
 
       HexSuture import <case.db> <event.xml>
-      HexSuture show <case.db> [--paths]
+      HexSuture show <case.db> [--paths] [--check-file <path>]
+      HexSuture review <case.db> <finding-id> <benign|malicious|uncertain>
+          --reviewer <alias> --reason <text> [--until <UTC>] [--file <path>]
+      HexSuture export <case.db> [--include-evidence] [--check-file <path>]
       HexSuture scan <case.db> folder <directory>
       HexSuture scan <case.db> quick
       HexSuture scan <case.db> full
@@ -34,12 +37,16 @@ try
             }
             Process.Start(new ProcessStartInfo("windowsdefender://history") { UseShellExecute = true })?.Dispose();
             return 0;
-        case ["show", _]:
-        case ["show", _, "--paths"]:
-            using (var store = new CaseStore(args[1], create: false))
-            {
-                WriteReport(store, includePaths: args.Length == 3);
-            }
+        case ["review", var database, var findingId, var decision, .. var reviewOptions]:
+            using (var store = new CaseStore(database, create: true, allowCreate: false))
+                FalsePositiveReview.Record(store, findingId, decision, reviewOptions);
+            Console.WriteLine("Review recorded in the case.");
+            return 0;
+        case [("show" or "export"), var database, .. var reportOptions]:
+            bool export = args[0] == "export";
+            var (details, checkFile) = ReadReportOptions(reportOptions, export ? "--include-evidence" : "--paths");
+            using (var store = new CaseStore(database, create: false))
+                WriteReport(store, export, details, checkFile);
             return 0;
         case ["--help"] or ["-h"]:
             Console.WriteLine(usage);
@@ -123,9 +130,29 @@ static int ReportSourceGap(CaseStore store, string source, string reason)
     return 1;
 }
 
-static void WriteReport(CaseStore store, bool includePaths)
+static (bool Details, string? CheckFile) ReadReportOptions(string[] options, string detailFlag)
+{
+    bool details = false;
+    string? file = null;
+    for (int index = 0; index < options.Length; index++)
+    {
+        if (options[index] == detailFlag && !details)
+            details = true;
+        else if (options[index] == "--check-file" && file is null && index + 1 < options.Length)
+            file = options[++index];
+        else
+            throw new ArgumentException("Invalid report option. See --help.");
+    }
+    return (details, file);
+}
+
+static void WriteReport(CaseStore store, bool export, bool details, string? checkFile)
 {
     var events = store.ObservedEvents().ToList();
+    var reviews = store.Reviews().ToList();
+    var now = DateTimeOffset.UtcNow;
+    bool includePaths = details;
+    bool includeEvidence = export && details;
     var report = new
     {
         scanRequests = store.ScanRequests().Select(request => new
@@ -139,10 +166,20 @@ static void WriteReport(CaseStore store, bool includePaths)
             engineVersion = request.EngineVersion,
             signatureVersion = request.SignatureVersion,
             processExitCode = request.ExitCode,
-            error = request.Error
+            error = export && !includeEvidence && request.Error is not null
+                ? "See the local case for details." : request.Error
         }),
         scans = ScanEvidence.Scans(events),
         detections = ScanEvidence.Detections(events, includePaths),
+        reviewQueue = FalsePositiveReview.Queue(ScanEvidence.ReviewFindings(events), reviews, now, checkFile),
+        reviews = reviews.Select(review => new
+        {
+            review.FindingId, review.RuleVersion, review.Decision,
+            reviewer = !export || includeEvidence ? review.Reviewer : null,
+            reason = !export || includeEvidence ? review.Reason : null,
+            review.ReviewedUtc, review.ExpiresUtc, review.ArtifactSha256,
+            artifactPath = includePaths ? review.ArtifactPath : null
+        }),
         observations = events.Select(observed => new
         {
             mode = observed.Mode,
@@ -152,15 +189,21 @@ static void WriteReport(CaseStore store, bool includePaths)
             provider = observed.Item.Provider,
             recordId = observed.Item.RecordId,
             eventId = observed.Item.EventId,
-            facts = ReportFacts(observed.Item)
+            facts = includeEvidence
+                ? JsonSerializer.Deserialize<Dictionary<string, string>>(observed.Item.FactsJson)
+                : ReportFacts(observed.Item)
         }),
         sourceGaps = store.SourceGaps().Select(gap => new
         {
-            sourceName = gap.SourceName,
-            reason = gap.Reason
+            sourceName = export && !includeEvidence ? null : gap.SourceName,
+            reason = export && !includeEvidence ? "See the local case for details." : gap.Reason
         })
     };
-    Console.WriteLine(JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+    Console.WriteLine(JsonSerializer.Serialize(report, new JsonSerializerOptions
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    }));
 }
 
 static Dictionary<string, string> ReportFacts(ReplayEvent item)
