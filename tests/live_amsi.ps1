@@ -8,6 +8,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 $started = [DateTimeOffset]::UtcNow
 $case = Join-Path $env:RUNNER_TEMP ('hexsuture-amsi-' + [Guid]::NewGuid().ToString('N') + '.db')
 $sample = Join-Path $TestVolume ('hexsuture-amsi-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+$jsSample = [IO.Path]::ChangeExtension($sample, '.js')
 $defender = Get-MpComputerStatus
 if (!$defender.AntivirusEnabled -or !$defender.RealTimeProtectionEnabled -or !$defender.BehaviorMonitorEnabled) {
     throw 'The AMSI demonstration requires active Defender, real-time protection and behavior monitoring.'
@@ -24,7 +25,20 @@ Invoke-Expression $marker
     $testOutput = & $powershell -NoProfile -NonInteractive -File $sample 2>&1
     $testExit = $LASTEXITCODE
     $blocked = (($testOutput -join ' ') -match 'ScriptContainedMaliciousContent')
-    Write-Host "AMSI test process exit=$testExit, reported block=$blocked."
+    $policyError = (($testOutput -join ' ') -match 'PSSecurityException|running scripts is disabled')
+    Write-Host "PowerShell AMSI test process exit=$testExit, reported block=$blocked, policy error=$policyError."
+
+    if (!$blocked) {
+        # The Microsoft demonstration also supports Windows Script Host.
+        @'
+eval("AMSI Test Sample: " + "7e72c3ce-861b-4339-8740-0ac1484c1386");
+'@ | Set-Content -LiteralPath $jsSample -Encoding ascii
+        $cscript = Join-Path $env:SystemRoot 'System32\cscript.exe'
+        $jsOutput = & $cscript //NoLogo $jsSample 2>&1
+        $jsExit = $LASTEXITCODE
+        $jsBlocked = (($jsOutput -join ' ') -match 'virus or potentially unwanted|800700E1')
+        Write-Host "Windows Script Host test process exit=$jsExit, reported block=$jsBlocked."
+    }
 
     for ($attempt = 0; $attempt -lt 12; $attempt++) {
         $null = & dotnet $Dll fileless collect $case --minutes 10
@@ -45,5 +59,7 @@ Invoke-Expression $marker
 }
 finally {
     if (Test-Path -LiteralPath $case) { Remove-Item -LiteralPath $case }
-    if (Test-Path -LiteralPath $sample) { Remove-Item -LiteralPath $sample }
+    foreach ($file in @($sample, $jsSample)) {
+        if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file }
+    }
 }
