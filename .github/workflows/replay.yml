@@ -53,9 +53,12 @@ jobs:
           if (@($disk).Count -ne 1 -or $disk.IsBoot -or $disk.IsSystem -or $disk.PartitionStyle -ne 'RAW' -or ($disk.Size -lt 120MB -or $disk.Size -gt 129MB)) {
             throw "The mounted test image is not a new, empty 128 MB disk."
           }
-          $partition = $disk | Initialize-Disk -PartitionStyle MBR -PassThru | New-Partition -UseMaximumSize -AssignDriveLetter
+          $letter = 'X','Y','Z' | Where-Object { !(Get-PSDrive -Name $_ -ErrorAction SilentlyContinue) } | Select-Object -First 1
+          if (!$letter) { throw "No unused test drive letter." }
+          $partition = $disk | Initialize-Disk -PartitionStyle MBR -PassThru | New-Partition -UseMaximumSize -DriveLetter $letter
           $volume = $partition | Format-Volume -FileSystem NTFS -NewFileSystemLabel HexSutureTest -Confirm:$false
-          if (!$volume.DriveLetter) { throw "The test volume has no drive letter." }
+          if ($volume.DriveLetter -ne $letter) { throw "The expected test volume was not mounted." }
+          Write-Host "Test fixture volume: $letter"
           "$($volume.DriveLetter):\" | Set-Content -LiteralPath "$env:RUNNER_TEMP/hexsuture-drive.txt"
       - name: Scan 100 benign files and check EICAR attribution
         shell: pwsh
